@@ -1,0 +1,144 @@
+/* --- Overlay Panel --- */
+#phish-analyzer-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 24px;
+  z-index: 2147483647;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  padding: 18px;
+  width: 380px;
+  font-family: "Segoe UI", Arial, sans-serif;
+  border-radius: 12px;
+  animation: phish-fadein 0.3s ease;
+  line-height: 1.5;
+}
+
+#phish-analyzer-panel strong {
+  font-size: 16px;
+}
+
+#phish-analyzer-panel details summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  margin-top: 6px;
+  color: #444;
+}
+
+#phish-analyzer-panel ol {
+  padding-left: 20px;
+  margin-top: 8px;
+}
+
+#phish-analyzer-panel li {
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+/* --- Header / Title --- */
+#phish-analyzer-panel .phish-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+#phish-analyzer-panel .phish-title {
+  font-size: 18px;
+  font-weight: bold;
+}
+
+/* --- Risk Badge --- */
+.phish-risk {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: bold;
+  margin-left: 6px;
+}
+
+/* Colors for different risk levels */
+.phish-safe {
+  background: #e6f4ea;
+  color: #137333;
+}
+.phish-suspicious {
+  background: #fff4e5;
+  color: #b26a00;
+}
+.phish-danger {
+  background: #fde8e6;
+  color: #d93025;
+}
+
+/* --- Close Button --- */
+#phish-analyzer-panel #phish-close {
+  cursor: pointer;
+  color: #777;
+  font-size: 20px;
+  font-weight: bold;
+}
+#phish-analyzer-panel #phish-close:hover {
+  color: #000;
+}
+
+/* --- Floating Analyze Button --- */
+#phish-float-btn {
+  position: fixed;
+  right: 24px;
+  bottom: 100px;
+  z-index: 2147483647;
+  background: #1976d2;
+  color: #fff;
+  border: none;
+  border-radius: 24px;
+  padding: 12px 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+#phish-float-btn:hover {
+  background: #1565c0;
+}
+
+/* --- Spinner --- */
+#phish-analyzer-spinner {
+  position: fixed;
+  right: 16px;
+  bottom: 24px;
+  z-index: 2147483646;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  animation: phish-fadein 0.3s ease;
+}
+
+.phish-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 3px solid #ccc;
+  border-top: 3px solid #333;
+  border-radius: 50%;
+  animation: phish-spin 1s linear infinite;
+}
+
+/* Animations */
+@keyframes phish-spin {
+  0% { transform: rotate(0deg);}
+  100% { transform: rotate(360deg);}
+}
+@keyframes phish-fadein {
+  from { opacity: 0; transform: translateY(8px);}
+  to { opacity: 1; transform: translateY(0);}
+}

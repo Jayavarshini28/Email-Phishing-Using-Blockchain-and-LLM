@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Email Phish Analyzer",
+  "version": "1.0",
+  "description": "Analyze opened emails for phishing risk using ML + LLM.",
+  "permissions": ["storage", "activeTab", "scripting", "notifications"],
+  "host_permissions": ["https://mail.google.com/*", "<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Phish Analyzer"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content_script.js"],
+      "css": ["content_style.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

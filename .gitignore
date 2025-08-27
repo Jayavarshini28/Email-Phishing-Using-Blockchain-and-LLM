@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+credentials.json
+token.json
+app.py
+email_phish/
+.env

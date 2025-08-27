@@ -1,0 +1,12 @@
+numpy
+pandas
+streamlit
+tldextract
+google-auth
+google-auth-oauthlib
+google-api-python-client
+sentence-transformers
+flask
+flask-cors
+python-dotenv
+scikit-learn

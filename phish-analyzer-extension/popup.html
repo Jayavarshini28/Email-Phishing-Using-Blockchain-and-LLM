@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Phish Analyzer</title>
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        padding: 16px;
+        width: 380px;
+        background: #f9fafb;
+        color: #111827;
+      }
+      h3 {
+        margin: 0 0 12px;
+        font-size: 20px;
+        color: #2563eb;
+      }
+      .toggle {
+        display: flex;
+        align-items: center;
+        margin: 12px 0;
+      }
+      input[type=checkbox] {
+        transform: scale(1.2);
+        margin-right: 8px;
+      }
+      input[type=password] {
+        width:100%;
+        padding:8px;
+        border:1px solid #d1d5db;
+        border-radius:6px;
+        margin:10px 0;
+      }
+      button {
+        width: 100%;
+        padding: 10px;
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      button:hover {
+        background: #1d4ed8;
+      }
+      #status {
+        margin-top: 12px;
+        font-size: 13px;
+        color: #374151;
+      }
+      footer {
+        margin-top: 16px;
+        font-size: 12px;
+        color: #6b7280;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Phish Analyzer</h3>
+    
+    <label>API Key (optional)</label>
+    <input id="apiKey" type="password" placeholder="x-api-key"/>
+
+    <div class="toggle">
+      <input id="sendFullBody" type="checkbox" checked/>
+      <label for="sendFullBody">Send full body for analysis</label>
+    </div>
+    
+    <button id="save">Save Preferences</button>
+    
+    <div id="status"></div>
+    <footer>
+      Data analyzed securely by Phish Analyzer
+    </footer>
+    
+    <script src="popup.js"></script>
+  </body>
+</html>
