@@ -9,6 +9,10 @@ CORS(app)  # allow cross-origin calls from extension (restrict in production)
 
 API_KEY = os.environ.get("EXT_API_KEY", "")
 
+@app.route('/')
+def home():
+    return "Phishing analyzer is running "
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     # simple API key check (improve in prod)
