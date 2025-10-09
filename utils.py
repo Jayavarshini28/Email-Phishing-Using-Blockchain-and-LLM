@@ -4,6 +4,9 @@ import pandas as pd
 from email import policy
 from email.parser import BytesParser
 import pickle
+import subprocess
+import json
+import os
 
 # Suppress warnings
 import warnings
@@ -318,10 +321,92 @@ if GEMINI_API_KEY:
 #     except Exception as e:
 #         return 0.5, f"LLM parse error: {e}, returning neutral safe score."
 
-import json, re
-from urllib.parse import urlparse
+def get_blockchain_classifications(url_domains):
+    """Simple blockchain lookup using JavaScript tools"""
+    classifications = {}
+    blockchain_signals = {
+        'blockchain_available': False,
+        'domains_checked': 0,
+        'domains_found': 0,
+        'cache_hits': 0
+    }
+    
+    if not url_domains:
+        return classifications, blockchain_signals
+    
+    # Use JavaScript interact script for blockchain queries
+    script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
+    
+    for domain in url_domains:
+        try:
+            result = subprocess.run(
+                ['node', script_path, 'query', domain],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if 'SPAM' in result.stdout:
+                classifications[domain] = {
+                    'exists': True, 'is_spam': True, 'blockchain_available': True
+                }
+                blockchain_signals['domains_found'] += 1
+            elif 'HAM' in result.stdout:
+                classifications[domain] = {
+                    'exists': True, 'is_spam': False, 'blockchain_available': True
+                }
+                blockchain_signals['domains_found'] += 1
+            else:
+                classifications[domain] = {
+                    'exists': False, 'is_spam': False, 'blockchain_available': True
+                }
+            
+            blockchain_signals['blockchain_available'] = True
+            blockchain_signals['domains_checked'] += 1
+            
+        except Exception as e:
+            print(f"Blockchain query failed for {domain}: {e}")
+            classifications[domain] = {
+                'exists': False, 'is_spam': False, 'blockchain_available': False
+            }
+    
+    return classifications, blockchain_signals
 
-def llm_safe_score_full(sender, subject, body, urls, base_signals, known_domains=None):
+def store_classification_to_blockchain(domain, is_spam, reason="", final_risk_score=None):
+    """Store classification using JavaScript tools"""
+    script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
+    
+    try:
+        enhanced_reason = reason
+        if final_risk_score is not None:
+            enhanced_reason = f"{reason} (Risk Score: {final_risk_score:.3f})"
+        
+        result = subprocess.run(
+            ['node', script_path, 'classify', domain, str(is_spam).lower(), enhanced_reason],
+            capture_output=True, text=True, timeout=30
+        )
+        
+        if 'Transaction confirmed' in result.stdout:
+            return True, f"Successfully stored {domain}"
+        else:
+            return False, "Failed to store classification"
+            
+    except Exception as e:
+        return False, f"Blockchain storage error: {e}"
+
+# --- LLM Sanity Check ---
+import google.generativeai as genai
+import os, json
+from urllib.parse import urlparse
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
+
+GENINI_MODEL_NAME = "gemini-1.5-flash"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+def llm_safe_score_full(sender, subject, body, urls, base_signals, known_domains=None, blockchain_data=None):
     """
     Ask Gemini to reason on the actual email contents + metadata.
     Returns (safe_score, reason).
@@ -376,8 +461,33 @@ def llm_safe_score_full(sender, subject, body, urls, base_signals, known_domains
     }
 
     # --- Prompt for LLM
+    blockchain_info = ""
+    if blockchain_data and blockchain_data.get('blockchain_available'):
+        cached_domains = blockchain_data.get('cached_domains', 0)
+        unknown_domains = blockchain_data.get('unknown_domains', 0)
+        
+        blockchain_info = f"""
+Blockchain Cache Data:
+- Blockchain Available: {blockchain_data.get('blockchain_available', False)}
+- Cached Domains: {cached_domains} (found in blockchain cache)
+- Unknown Domains: {unknown_domains} (not in cache, analyzed with ML)
+
+Domain Classifications from Cache:"""
+        
+        # Add individual domain data if available
+        domain_details = blockchain_data.get('domain_details', {})
+        for domain, cls_data in domain_details.items():
+            if cls_data.get('exists'):
+                classification = "SPAM" if cls_data.get('is_spam') else "HAM"
+                timestamp = cls_data.get('timestamp', 0)
+                blockchain_info += f"""
+  {domain}: {classification} (cached, stored: {timestamp})"""
+            else:
+                blockchain_info += f"""
+  {domain}: Not in cache (analyzed with ML)"""
+
     prompt = f"""
-You are a cybersecurity assistant. You will receive privacy-minimized metadata + heuristics.
+You are a cybersecurity assistant. You will receive privacy-minimized metadata + heuristics + blockchain cache data.
 Estimate how SAFE this email is. Provide necessary actions that can be taken care by the user if its suspicious or phish.
 
 Email Metadata:
@@ -387,15 +497,20 @@ Sender Domain: {sender_domain}
 URL Domains: {", ".join(url_domains) if url_domains else "none"}
 Base signals: {base_signals}
 Heuristic Flags: {heuristic_flags}
+{blockchain_info}
 
 Body (truncated):
 {preview_body}
 
 Rules:
-- 0.9–1.0 → clear legitimate service/content (known domains, no flags).
-- 0.6–0.8 → looks fine but some uncertainty.
-- 0.3–0.5 → suspicious heuristics or mismatch.
-- 0.0–0.2 → clear phishing attempt (impersonation, malicious wording).
+- Blockchain cache contains previous community classifications (SPAM/HAM)
+- If domains are cached as SPAM, increase suspicion significantly
+- If domains are cached as HAM, increase confidence in legitimacy
+- Unknown domains (not cached) rely on ML analysis signals
+- 0.9–1.0 → clear legitimate service/content (known domains, cached as HAM, no flags)
+- 0.6–0.8 → looks fine but some uncertainty
+- 0.3–0.5 → suspicious heuristics or mismatch, mixed cache results
+- 0.0–0.2 → clear phishing attempt (cached as SPAM, malicious patterns)
 
 Reply strictly in JSON:
 {{
@@ -430,32 +545,110 @@ Reply strictly in JSON:
 
 
 def compute_final_risk(email_text, sender=None, subject=None, w1=0.6, w2=0.4):
-    # --- ML models ---
-    content_prob = classify_email_proba(email_text)  # phishing prob from text
+    # --- Extract URL domains first ---
     urls = extract_urls_from_email(email_text)
-    url_probs = [classify_url_proba(url) for url in urls]
-    url_prob = np.mean(url_probs) if url_probs else 0.0
+    url_domains = []
+    for u in urls:
+        try:
+            d = urlparse(u).hostname
+            if d:
+                url_domains.append(d.lower())
+        except:
+            continue
+    url_domains = list(set(url_domains))
+
+    # --- BLOCKCHAIN CACHE LOOKUP FIRST ---
+    domain_classifications, blockchain_signals = get_blockchain_classifications(url_domains)
+    
+    # Check if any domains have cached classifications
+    cached_classifications = {}
+    unknown_domains = []
+    
+    for domain in url_domains:
+        cls_data = domain_classifications.get(domain, {})
+        if cls_data.get('exists', False):
+            # Domain found in blockchain cache
+            cached_classifications[domain] = cls_data
+        else:
+            # Domain not in cache, needs ML analysis
+            unknown_domains.append(domain)
+    
+    # --- ML ANALYSIS ---
+    content_prob = classify_email_proba(email_text)  # phishing prob from text
+    
+    # Only run URL analysis for unknown domains
+    if unknown_domains:
+        url_probs = []
+        for url in urls:
+            try:
+                domain = urlparse(url).hostname.lower()
+                if domain in unknown_domains:
+                    url_probs.append(classify_url_proba(url))
+            except:
+                continue
+        url_prob = np.mean(url_probs) if url_probs else 0.0
+    else:
+        # Use cached classifications for URL risk
+        cached_spam_count = sum(1 for cls in cached_classifications.values() if cls.get('is_spam', False))
+        total_cached = len(cached_classifications)
+        url_prob = (cached_spam_count / total_cached) if total_cached > 0 else 0.0
+    
     ml_score = (w1 * content_prob) + (w2 * url_prob)
 
     base_signals = {
         "content_prob": round(content_prob, 3),
         "url_prob": round(url_prob, 3),
+        "blockchain_available": blockchain_signals['blockchain_available'],
+        "cached_domains": len(cached_classifications),
+        "unknown_domains": len(unknown_domains)
     }
 
-    # --- LLM model ---
-    safe_score, reason, actions = llm_safe_score_full(sender, subject, email_text, urls, base_signals)
+    # --- LLM REASONING with blockchain context ---
+    blockchain_data = blockchain_signals.copy()
+    blockchain_data['domain_details'] = domain_classifications
+
+    safe_score, reason, actions = llm_safe_score_full(
+        sender, subject, email_text, urls, base_signals, 
+        blockchain_data=blockchain_data
+    )
     llm_risk = 1 - safe_score
 
-    # --- Adaptive weight logic ---
-    # Confidence = distance from 0.5 → higher if near 0/1
-    llm_conf = abs(safe_score - 0.5) * 2  # 0 (uncertain) → 1 (very confident)
-
-    # Adaptive LLM weight (can tune baseline = 0.5)
+    # --- FINAL RISK CALCULATION ---
+    # If we have cached classifications, use them to influence the score
+    blockchain_risk_factor = 0.5  # Default neutral
+    blockchain_weight = 0.0
+    
+    if cached_classifications:
+        # Calculate risk based on cached spam classifications
+        spam_domains = sum(1 for cls in cached_classifications.values() if cls.get('is_spam', False))
+        total_cached = len(cached_classifications)
+        blockchain_risk_factor = spam_domains / total_cached if total_cached > 0 else 0.5
+        blockchain_weight = 0.4  # Give significant weight to cached data
+    
+    # Adaptive LLM weight
+    llm_conf = abs(safe_score - 0.5) * 2
     w_llm = 0.5 + (0.5 * llm_conf)
-
+    
     # Normalize weights
-    total_w = w1 + w2 + w_llm
-    final_risk = (w1 * content_prob + w2 * url_prob + w_llm * llm_risk) / total_w
+    total_w = w1 + w2 + w_llm + blockchain_weight
+    final_risk = (
+        w1 * content_prob + 
+        w2 * url_prob + 
+        w_llm * llm_risk + 
+        blockchain_weight * blockchain_risk_factor
+    ) / total_w
+
+    # --- STORE NEW CLASSIFICATIONS TO BLOCKCHAIN ---
+    # Store final classification for unknown domains
+    if unknown_domains and blockchain_signals['blockchain_available']:
+        classification_threshold = 0.6  # Domains above this are considered spam
+        for domain in unknown_domains:
+            is_spam = final_risk > classification_threshold
+            reason_text = f"ML+LLM analysis result (Risk: {final_risk:.3f})"
+            try:
+                store_classification_to_blockchain(domain, is_spam, reason_text, final_risk)
+            except Exception as e:
+                print(f"Failed to store {domain} to blockchain: {e}")
 
     return final_risk, {
         "content_prob": round(content_prob, 3),
@@ -466,5 +659,33 @@ def compute_final_risk(email_text, sender=None, subject=None, w1=0.6, w2=0.4):
         "llm_actions": actions,
         "llm_conf": round(llm_conf, 3),
         "adaptive_llm_weight": round(w_llm, 2),
+        "blockchain_risk_factor": round(blockchain_risk_factor, 3),
+        "blockchain_weight": round(blockchain_weight, 2),
+        "blockchain_signals": blockchain_signals,
+        "domain_classifications": domain_classifications,
+        "cached_domains": len(cached_classifications),
+        "unknown_domains": len(unknown_domains),
+        "final_risk": round(final_risk, 3),
+    }
+    try:
+        store_classification_to_blockchain(domain, is_spam, reason_text, final_risk)
+    except Exception as e:
+        print(f"Failed to store {domain} to blockchain: {e}")
+
+    return final_risk, {
+        "content_prob": round(content_prob, 3),
+        "url_prob": round(url_prob, 3),
+        "ml_score": round(ml_score, 3),
+        "llm_safe_score": round(safe_score, 3),
+        "llm_reason": reason,
+        "llm_actions": actions,
+        "llm_conf": round(llm_conf, 3),
+        "adaptive_llm_weight": round(w_llm, 2),
+        "blockchain_risk_factor": round(blockchain_risk_factor, 3),
+        "blockchain_weight": round(blockchain_weight, 2),
+        "blockchain_signals": blockchain_signals,
+        "domain_classifications": domain_classifications,
+        "cached_domains": len(cached_classifications),
+        "unknown_domains": len(unknown_domains),
         "final_risk": round(final_risk, 3),
     }

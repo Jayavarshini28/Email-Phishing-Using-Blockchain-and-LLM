@@ -2,6 +2,7 @@ import pandas as pd
 import tldextract
 import re
 from urllib.parse import urlparse
+from blockchain_wrapper import check_domain_reputation
 
 # Symbols and vowels
 special_chars = ['.', '-', '_', '/', '?', '=', '@', '&', '!', ' ', '~', ',', '+', '*', '#', '$', '%']
@@ -94,3 +95,32 @@ def extract_generic_features(url):
     features, parsed, ext = extract_features(url)
     # Add any specific generic features here if needed in the future
     return features
+
+def extract_domain_from_url(url):
+    """Extract clean domain from URL for blockchain lookup"""
+    try:
+        parsed = urlparse(url if url.startswith(('http://', 'https://')) else f'http://{url}')
+        domain = parsed.hostname or url
+        
+        # Extract root domain
+        ext = tldextract.extract(domain)
+        if ext.domain and ext.suffix:
+            return f"{ext.domain}.{ext.suffix}"
+        return domain.lower()
+    except:
+        return url.lower()
+
+def check_url_reputation(url):
+    """
+    Check URL reputation using blockchain
+    Returns: 'spam', 'ham', 'unknown'
+    """
+    domain = extract_domain_from_url(url)
+    reputation = check_domain_reputation(domain)
+    
+    if reputation is True:
+        return 'spam'
+    elif reputation is False:
+        return 'ham'
+    else:
+        return 'unknown'

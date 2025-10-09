@@ -1,0 +1,33 @@
+{
+  "name": "domain-classification-blockchain",
+  "version": "1.0.0",
+  "description": "Blockchain scripts for domain classification contract",
+  "type": "module",
+  "main": "interact.js",
+  "scripts": {
+    "deploy": "node deploy.js",
+    "compile": "npx hardhat compile",
+    "test": "node interact.js test",
+    "classify": "node interact.js classify",
+    "query": "node interact.js query",
+    "stats": "node interact.js stats"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ethers": "^6.8.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
+  },
+  "keywords": [
+    "blockchain",
+    "ethereum",
+    "smart-contract",
+    "phishing",
+    "domain-classification"
+  ],
+  "author": "Email Phishing Detection System",
+  "license": "MIT"
+}
+

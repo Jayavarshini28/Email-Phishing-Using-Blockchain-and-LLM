@@ -1,13 +1,13 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
-    <meta charset="utf-8">
+    <meta charset="utf-8" />
     <title>Phish Analyzer</title>
     <style>
       body {
-        font-family: 'Inter', sans-serif;
+        font-family: "Inter", sans-serif;
         padding: 16px;
-        width: 380px;
+        width: 400px;
         background: #f9fafb;
         color: #111827;
       }
@@ -16,21 +16,34 @@
         font-size: 20px;
         color: #2563eb;
       }
+      .section {
+        margin: 16px 0;
+        padding: 12px;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e5e7eb;
+      }
+      .section h4 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #374151;
+      }
       .toggle {
         display: flex;
         align-items: center;
         margin: 12px 0;
       }
-      input[type=checkbox] {
+      input[type="checkbox"] {
         transform: scale(1.2);
         margin-right: 8px;
       }
-      input[type=password] {
-        width:100%;
-        padding:8px;
-        border:1px solid #d1d5db;
-        border-radius:6px;
-        margin:10px 0;
+      input[type="password"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        margin: 10px 0;
       }
       button {
         width: 100%;
@@ -46,10 +59,38 @@
       button:hover {
         background: #1d4ed8;
       }
+      button.secondary {
+        background: #6b7280;
+        margin-top: 8px;
+      }
+      button.secondary:hover {
+        background: #4b5563;
+      }
       #status {
         margin-top: 12px;
         font-size: 13px;
         color: #374151;
+      }
+      .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+      }
+      .status-connected {
+        background: #10b981;
+      }
+      .status-disconnected {
+        background: #ef4444;
+      }
+      .status-unknown {
+        background: #f59e0b;
+      }
+      .blockchain-info {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
       }
       footer {
         margin-top: 16px;
@@ -60,23 +101,52 @@
     </style>
   </head>
   <body>
-    <h3>Phish Analyzer</h3>
-    
-    <label>API Key (optional)</label>
-    <input id="apiKey" type="password" placeholder="x-api-key"/>
+    <h3>🛡️ Phish Analyzer</h3>
 
-    <div class="toggle">
-      <input id="sendFullBody" type="checkbox" checked/>
-      <label for="sendFullBody">Send full body for analysis</label>
+    <div class="section">
+      <h4>🔗 Blockchain Status</h4>
+      <div id="blockchainStatus">
+        <div style="display: flex; align-items: center">
+          <span class="status-indicator status-unknown"></span>
+          <span>Checking connection...</span>
+        </div>
+        <div class="blockchain-info" id="blockchainDetails">
+          Network: Checking...
+        </div>
+      </div>
+      <button id="refreshStatus" class="secondary">🔄 Refresh Status</button>
     </div>
-    
-    <button id="save">Save Preferences</button>
-    
+
+    <div class="section">
+      <h4>⚙️ Settings</h4>
+      <label>API Key (optional)</label>
+      <input id="apiKey" type="password" placeholder="x-api-key" />
+
+      <div class="toggle">
+        <input id="sendFullBody" type="checkbox" checked />
+        <label for="sendFullBody">Send full body for analysis</label>
+      </div>
+
+      <div class="toggle">
+        <input id="enableBlockchain" type="checkbox" checked />
+        <label for="enableBlockchain">Enable blockchain reputation</label>
+      </div>
+
+      <button id="save">💾 Save Preferences</button>
+    </div>
+
+    <div class="section">
+      <h4>ℹ️ Information</h4>
+      <div style="font-size: 12px; color: #6b7280; line-height: 1.4">
+        <p><strong>ML Analysis:</strong> Content and URL classification</p>
+        <p><strong>AI Reasoning:</strong> Contextual safety assessment</p>
+        <p><strong>Blockchain:</strong> Community reputation system</p>
+      </div>
+    </div>
+
     <div id="status"></div>
-    <footer>
-      Data analyzed securely by Phish Analyzer
-    </footer>
-    
+    <footer>Advanced email security with ML, AI, and blockchain</footer>
+
     <script src="popup.js"></script>
   </body>
 </html>

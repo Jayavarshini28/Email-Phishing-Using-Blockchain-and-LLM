@@ -5,8 +5,13 @@ tldextract
 google-auth
 google-auth-oauthlib
 google-api-python-client
+google-generativeai
 sentence-transformers
 flask
 flask-cors
 python-dotenv
 scikit-learn
+web3
+py-solc-x
+eth-account
+python-dotenv
