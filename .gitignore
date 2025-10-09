@@ -8,3 +8,4 @@ token.json
 app.py
 email_phish/
 .env
+.venv/
