@@ -48,6 +48,8 @@ class DomainClassificationContract {
       "function isDomainKnown(string memory _domain) external view returns (bool exists, bool isSpam)",
       "function getStats() external view returns (uint256, uint256)",
       "function canUserSubmit(address _user) external view returns (bool canSubmit, uint256 nextSubmissionTime)",
+      "function submissionCooldown() external view returns (uint256)",
+      "function lastSubmissionTime(address) external view returns (uint256)",
       "event DomainClassified(string indexed domain, bool isSpam, address indexed reporter, uint256 timestamp)",
     ];
 
@@ -198,6 +200,78 @@ class DomainClassificationContract {
       return null;
     }
   }
+
+  async getCooldownInfo() {
+    try {
+      if (!this.contract) {
+        throw new Error("Contract not initialized");
+      }
+
+      const cooldown = await this.contract.submissionCooldown();
+      const lastSubmission = await this.contract.lastSubmissionTime(
+        this.wallet.address
+      );
+      const now = Math.floor(Date.now() / 1000);
+      const canSubmitTime = Number(lastSubmission) + Number(cooldown);
+      const canSubmit = now >= canSubmitTime;
+
+      console.log(`📊 Cooldown Information:`);
+      console.log(`   Current cooldown: ${cooldown.toString()} seconds`);
+      console.log(
+        `   Last submission: ${new Date(
+          Number(lastSubmission) * 1000
+        ).toISOString()}`
+      );
+      console.log(`   Can submit: ${canSubmit}`);
+      console.log(
+        `   Next submission time: ${new Date(
+          canSubmitTime * 1000
+        ).toISOString()}`
+      );
+
+      return {
+        cooldown: Number(cooldown),
+        lastSubmission: Number(lastSubmission),
+        canSubmit: canSubmit,
+        nextSubmissionTime: canSubmitTime,
+      };
+    } catch (error) {
+      console.error("❌ Cooldown check failed:", error.message);
+      return null;
+    }
+  }
+
+  async getDomainReputation(domain) {
+    try {
+      const classification = await this.getDomainClassification(domain);
+
+      if (classification && classification.exists) {
+        return {
+          exists: true,
+          reputation_score: classification.isSpam ? 10 : 90,
+          consensus: classification.isSpam ? "spam" : "ham",
+          spam_votes: classification.isSpam ? 1 : 0,
+          ham_votes: classification.isSpam ? 0 : 1,
+          total_reports: 1,
+          timestamp: classification.timestamp,
+          reporter: classification.reporter,
+          reason: classification.reason,
+        };
+      } else {
+        return {
+          exists: false,
+          reputation_score: 50,
+          consensus: "unknown",
+          spam_votes: 0,
+          ham_votes: 0,
+          total_reports: 0,
+        };
+      }
+    } catch (error) {
+      console.error("❌ Reputation query failed:", error.message);
+      return { exists: false };
+    }
+  }
 }
 
 // Test functions
@@ -255,7 +329,7 @@ async function testContract() {
   }, 5000);
 }
 
-// Fixed CLI interface - remove the problematic condition and just run commands
+// CLI interface
 console.log("🔍 Debug info:");
 console.log("import.meta.url:", import.meta.url);
 console.log("process.argv[1]:", process.argv[1]);
@@ -267,18 +341,21 @@ const contract = new DomainClassificationContract();
 if (args.length === 0) {
   console.log("🔧 Contract Interaction Script");
   console.log("Usage:");
-  console.log("  node interact.js test                     - Run test suite");
+  console.log("  node interact.js test                       - Run test suite");
   console.log(
-    "  node interact.js classify <domain> <spam> - Classify domain (spam: true/false)"
+    "  node interact.js classify <domain> <spam>   - Classify domain (spam: true/false)"
   );
   console.log(
-    "  node interact.js query <domain>           - Query domain classification"
+    "  node interact.js query <domain>             - Query domain classification"
   );
   console.log(
-    "  node interact.js stats                    - Get contract statistics"
+    "  node interact.js stats                      - Get contract statistics"
   );
   console.log(
-    "  node interact.js check                    - Check if can submit"
+    "  node interact.js check                      - Check if can submit"
+  );
+  console.log(
+    "  node interact.js cooldown                   - Get cooldown information"
   );
   process.exit(0);
 }
@@ -306,7 +383,12 @@ try {
         console.log("Usage: node interact.js query <domain>");
         process.exit(1);
       }
-      await contract.getDomainClassification(args[1]);
+      const result = await contract.getDomainClassification(args[1]);
+      if (result && result.exists) {
+        console.log(result.isSpam ? "SPAM" : "HAM");
+      } else {
+        console.log("UNKNOWN");
+      }
       break;
 
     case "stats":
@@ -317,9 +399,15 @@ try {
       await contract.canUserSubmit();
       break;
 
+    case "cooldown":
+      await contract.getCooldownInfo();
+      break;
+
     default:
       console.log("Unknown command:", command);
-      console.log("Available commands: test, classify, query, stats, check");
+      console.log(
+        "Available commands: test, classify, store, query, reputation, stats, check, cooldown"
+      );
       process.exit(1);
   }
 } catch (error) {

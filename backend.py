@@ -2,7 +2,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 from utils import compute_final_risk, store_classification_to_blockchain, get_domains_from_analysis_result
-from blockchain_integration import get_blockchain_instance
+# from blockchain_integration import get_blockchain_instance
+from blockchain_integration import get_blockchain_instance  
 import logging
 import re
 from urllib.parse import urlparse
@@ -96,7 +97,7 @@ def auto_report_domains_to_blockchain(domains, final_risk, llm_reason="", sender
 @app.route('/')
 def home():
     """Health check endpoint"""
-    blockchain = get_blockchain_instance()
+    blockchain = get_blockchain_instance()   
     blockchain_status = blockchain.get_connection_status()
     
     return jsonify({

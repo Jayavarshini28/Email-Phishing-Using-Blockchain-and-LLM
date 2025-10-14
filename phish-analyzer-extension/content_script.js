@@ -265,7 +265,7 @@ console.log("✅ Content script loaded into Gmail");
 
       // Submit feedback to blockchain via backend
       const response = await fetch(
-        "http://localhost:8080/blockchain/bulk-report",
+        "http://127.0.0.1:8080/blockchain/bulk-report", // ✅ Correct
         {
           method: "POST",
           headers: {
