@@ -61,23 +61,13 @@ console.log("✅ Content script loaded into Gmail");
     // Blockchain information
     const blockchainData = result.blockchain_signals || {};
     const domainReputations = result.domain_reputations || {};
-    const blockchainAvailable = result.blockchain_available || false;
+    const blockchainWeight = result.blockchain_weight || 0;
+    const blockchainAvailable = blockchainWeight > 0;
 
     let panel = document.getElementById("phish-analyzer-panel");
     if (!panel) {
       panel = document.createElement("div");
       panel.id = "phish-analyzer-panel";
-      panel.style.position = "fixed";
-      panel.style.right = "16px";
-      panel.style.bottom = "24px";
-      panel.style.zIndex = 2147483647;
-      panel.style.background = "#ffffff";
-      panel.style.border = "1px solid #ddd";
-      panel.style.boxShadow = "0 6px 18px rgba(0,0,0,0.12)";
-      panel.style.padding = "12px";
-      panel.style.width = "360px";
-      panel.style.fontFamily = "Arial, sans-serif";
-      panel.style.borderRadius = "8px";
       document.body.appendChild(panel);
     }
 
@@ -163,69 +153,147 @@ console.log("✅ Content script loaded into Gmail");
   `;
 
     panel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <strong style="font-size:17px;">Email Phish Analyzer</strong>
-      <a id="phish-close" style="cursor:pointer;color:#666;font-size:18px;">✕</a>
+    <div class="phish-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #e8f0fe;">
+      <div class="phish-title" style="font-size:20px;font-weight:700;color:#1976d2;">
+        Email Phish Analyzer
+      </div>
+      <a id="phish-close" style="cursor:pointer;color:#666;font-size:28px;text-decoration:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:50%;" title="Close">✕</a>
     </div>
-    <div style="margin-top:8px;font-size:15px;">
-      <!-- Final risk: <strong>${risk.toFixed(2)}</strong> -->
-      <span style="
-        display:inline-block;
-        margin-left:6px;
-        padding:2px 8px;
-        border-radius:6px;
-        font-size:13px;
-        font-weight:bold;
-        ${
+    
+    <div class="phish-content-scrollable" style="max-height:calc(85vh - 80px);overflow-y:auto;overflow-x:hidden;padding-right:8px;">
+      <div style="margin-bottom:16px;padding:12px;background:${
+        riskClass === "phish-safe"
+          ? "linear-gradient(135deg, #e6f4ea 0%, #d4ede0 100%)"
+          : riskClass === "phish-suspicious"
+          ? "linear-gradient(135deg, #fff4e5 0%, #ffe8cc 100%)"
+          : "linear-gradient(135deg, #fde8e6 0%, #fcd3d0 100%)"
+      };border-radius:8px;border-left:4px solid ${
+        riskClass === "phish-safe"
+          ? "#137333"
+          : riskClass === "phish-suspicious"
+          ? "#b26a00"
+          : "#d93025"
+      };">
+        <div style="font-size:14px;font-weight:600;color:#444;margin-bottom:4px;">Risk Assessment:</div>
+        <div style="font-size:24px;font-weight:bold;color:${
           riskClass === "phish-safe"
-            ? "background:#e6f4ea;color:#137333;"
+            ? "#137333"
             : riskClass === "phish-suspicious"
-            ? "background:#fff4e5;color:#b26a00;"
-            : "background:#fde8e6;color:#d93025;"
-        }
-      ">
-        ${riskLabel} (${(risk * 100).toFixed(0)}%)
-      </span>
-    </div>
-    ${blockchainSection}
-    <div style="margin-top:8px">
-      <details open>
-        <summary style="cursor:pointer;font-weight:500;font-size:14px;">🤖 AI Analysis & Actions</summary>
-        <div style="margin-top:8px;color:#222;font-size:13px">
-          <div style="margin-bottom:10px;">
-            <strong>Reasoning:</strong> 
-            <span style="color:#1976d2;">${result.llm_reason || ""}</span>
-          </div>
-          <div style="margin-top:8px">
-            <strong>Recommended Actions:</strong>
-            <ol id="phish-actions" style="padding-left:20px;margin-top:6px;margin-bottom:0;"></ol>
-          </div>
+            ? "#b26a00"
+            : "#d93025"
+        };">
+          ${riskLabel} (${
+            riskClass === "phish-danger"
+              ? (risk * 100).toFixed(0)  // For "Phishing", show risk as-is
+              : ((1 - risk) * 100).toFixed(0)  // For "Safe" and "Suspicious", show confidence (100 - risk)
+          }%)
         </div>
-      </details>
-    </div>
-    <div style="margin-top:12px;border-top:1px solid #eee;padding-top:8px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">Help improve accuracy:</div>
-      <div style="display:flex;gap:8px;">
-        <button id="feedback-safe" style="flex:1;padding:4px 8px;border:1px solid #137333;background:#e6f4ea;color:#137333;border-radius:4px;cursor:pointer;font-size:11px;">✅ Safe</button>
-        <button id="feedback-phishing" style="flex:1;padding:4px 8px;border:1px solid #d93025;background:#fde8e6;color:#d93025;border-radius:4px;cursor:pointer;font-size:11px;">❌ Phishing</button>
+      </div>
+      
+      
+      
+      <div style="margin-top:16px;background:#f8f9fa;border-radius:8px;padding:12px;border:1px solid #e0e0e0;">
+        <details open>
+          <summary style="cursor:pointer;font-weight:600;font-size:15px;color:#1976d2;margin-bottom:12px;">🤖 AI Analysis & Actions</summary>
+          
+          <div style="background:white;padding:12px;border-radius:6px;margin-top:12px;border:1px solid #e8f0fe;">
+            <div style="font-weight:600;font-size:13px;color:#444;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+              <span style="color:#1976d2;">💭</span> Reasoning:
+            </div>
+            <div id="phish-reasoning" style="color:#333;font-size:13px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;max-width:100%;"></div>
+          </div>
+          
+          <div style="background:white;padding:12px;border-radius:6px;margin-top:12px;border:1px solid #e8f0fe;">
+            <div style="font-weight:600;font-size:13px;color:#444;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+              <span style="color:#1976d2;">✅</span> Recommended Actions:
+            </div>
+            <ol id="phish-actions" style="padding-left:24px;margin:0;color:#333;font-size:13px;line-height:1.8;"></ol>
+          </div>
+        </details>
+      </div>
+      
+      <div style="margin-top:16px;border-top:2px solid #e8f0fe;padding-top:12px;">
+        <div style="font-size:13px;color:#666;margin-bottom:8px;font-weight:600;">📊 Help improve accuracy:</div>
+        <div style="display:flex;gap:10px;">
+          <button id="feedback-safe" style="flex:1;padding:8px 12px;border:2px solid #137333;background:#e6f4ea;color:#137333;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">✅ Safe</button>
+          <button id="feedback-phishing" style="flex:1;padding:8px 12px;border:2px solid #d93025;background:#fde8e6;color:#d93025;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">❌ Phishing</button>
+        </div>
       </div>
     </div>
   `;
 
-    const closeBtn = panel.querySelector("#phish-close");
-    closeBtn.onclick = () => panel.remove();
+    // Insert full reasoning text (no trimming)
+    const reasoningEl = panel.querySelector("#phish-reasoning");
+    if (reasoningEl) {
+      const fullReasoning = result.llm_reason || "No reasoning provided";
+      reasoningEl.textContent = fullReasoning;
+    }
 
-    // Actions list
+    const closeBtn = panel.querySelector("#phish-close");
+    closeBtn.onclick = () => {
+      panel.style.animation = "phish-fadeout 0.2s ease";
+      setTimeout(() => panel.remove(), 200);
+    };
+
+    // Make panel draggable by header
+    const header = panel.querySelector(".phish-header");
+    let isDragging = false;
+    let currentX;
+    let currentY;
+    let initialX;
+    let initialY;
+
+    header.style.cursor = "move";
+    header.addEventListener("mousedown", dragStart);
+    document.addEventListener("mousemove", drag);
+    document.addEventListener("mouseup", dragEnd);
+
+    function dragStart(e) {
+      if (e.target.id === "phish-close") return; // Don't drag when clicking close
+      initialX = e.clientX - panel.offsetLeft;
+      initialY = e.clientY - panel.offsetTop;
+      isDragging = true;
+    }
+
+    function drag(e) {
+      if (isDragging) {
+        e.preventDefault();
+        currentX = e.clientX - initialX;
+        currentY = e.clientY - initialY;
+        panel.style.left = currentX + "px";
+        panel.style.top = currentY + "px";
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+      }
+    }
+
+    function dragEnd() {
+      isDragging = false;
+    }
+
+    // Actions list - display full text without trimming
     const actionsEl = panel.querySelector("#phish-actions");
-    actionsEl.innerHTML = "";
-    const actions = result.llm_actions || [];
-    actions.forEach((a) => {
-      const li = document.createElement("li");
-      li.innerText = a.replace(/^\s*\d+\.[\s-]*/, "");
-      li.style.marginBottom = "8px";
-      li.style.lineHeight = "1.5";
-      actionsEl.appendChild(li);
-    });
+    if (actionsEl) {
+      actionsEl.innerHTML = "";
+      const actions = result.llm_actions || [];
+      if (actions.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "No specific actions recommended";
+        li.style.color = "#666";
+        actionsEl.appendChild(li);
+      } else {
+        actions.forEach((action) => {
+          const li = document.createElement("li");
+          // Don't trim - show full action text
+          const fullAction = action.replace(/^\s*\d+\.[\s-]*/, "");
+          li.textContent = fullAction;
+          li.style.marginBottom = "10px";
+          li.style.lineHeight = "1.7";
+          li.style.wordWrap = "break-word";
+          actionsEl.appendChild(li);
+        });
+      }
+    }
 
     // Feedback buttons
     const feedbackSafeBtn = panel.querySelector("#feedback-safe");
@@ -263,9 +331,32 @@ console.log("✅ Content script loaded into Gmail");
         chrome.storage.local.get(["apiKey", "privacyMode"], resolve);
       });
 
+      // Re-extract current email data to ensure we have fresh sender and URLs
+      const currentEmailData = getGmailMessageData();
+      
+      // Prepare analysis result with all necessary data
+      const analysisData = {
+        ...analysisResult,
+        sender: currentEmailData?.sender || analysisResult.sender || (analysisResult.details && analysisResult.details.sender),
+        final_risk: analysisResult.final_risk || 0.5,
+        details: {
+          ...(analysisResult.details || {}),
+          sender: currentEmailData?.sender || analysisResult.sender,
+          urls: currentEmailData?.urls || (analysisResult.details && analysisResult.details.urls) || [],
+          domains: (analysisResult.details && analysisResult.details.domains) || []
+        }
+      };
+
+      console.log("📤 Submitting feedback with data:", {
+        sender: analysisData.sender,
+        urlCount: analysisData.details.urls.length,
+        domainCount: analysisData.details.domains.length,
+        classification: classification
+      });
+
       // Submit feedback to blockchain via backend
       const response = await fetch(
-        "http://127.0.0.1:8080/blockchain/bulk-report", // ✅ Correct
+        "http://127.0.0.1:8080/blockchain/bulk-report",
         {
           method: "POST",
           headers: {
@@ -273,9 +364,9 @@ console.log("✅ Content script loaded into Gmail");
             ...(settings.apiKey && { "x-api-key": settings.apiKey }),
           },
           body: JSON.stringify({
-            analysis_result: analysisResult.details || analysisResult,
+            analysis_result: analysisData,
             user_classification: classification,
-            reason: `User feedback from Gmail extension (${classification})`,
+            reason: `User feedback from Gmail extension - ${classification === 'spam' ? 'Phishing reported' : 'Safe email confirmed'}`,
           }),
         }
       );

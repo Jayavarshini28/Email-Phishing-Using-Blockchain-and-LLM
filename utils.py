@@ -272,14 +272,26 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
             logger.warning("Blockchain script not found")
             return {"exists": False}
         
+        # Use UTF-8 encoding to avoid Windows CP1252 Unicode errors
         result = subprocess.run(
             ['node', script_path, 'query', domain],
-            capture_output=True, text=True, timeout=10
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',  # Ignore Unicode decode errors
+            timeout=10
         )
         
-        if result.returncode == 0:
-            classification = result.stdout.strip()
+        if result.returncode == 0 and result.stdout:
+            # Extract ONLY the last line (which is the classification)
+            # This ignores all the debug/emoji output from interact.js
+            lines = result.stdout.strip().split('\n')
+            classification = lines[-1].strip() if lines else ''
+            
+            logger.debug(f"Blockchain query output for {domain}: {len(lines)} lines, last='{classification}'")
+            
             if classification in ['SPAM', 'HAM']:
+                logger.info(f"✅ Found blockchain record for {domain}: {classification}")
                 return {
                     "exists": True,
                     "reputation_score": 10 if classification == 'SPAM' else 90,
@@ -289,9 +301,11 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
                     "total_reports": 1
                 }
             else:
+                logger.info(f"No blockchain record for {domain} (got '{classification}')")
                 return {"exists": False}
         else:
-            logger.error(f"Blockchain query failed: {result.stderr}")
+            if result.stderr:
+                logger.warning(f"Blockchain query stderr: {result.stderr[:100]}")
             return {"exists": False}
     except Exception as e:
         logger.error(f"Error querying blockchain: {e}")
@@ -307,17 +321,22 @@ def store_classification_to_blockchain(domain: str, is_spam: bool, reason: str, 
         
         classification ='true' if is_spam else 'false'
         
+        # Use UTF-8 encoding to avoid Windows CP1252 Unicode errors
         result = subprocess.run(
             ['node', script_path, 'classify', domain, classification, reason],
-            capture_output=True, text=True, timeout=30
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',  # Ignore Unicode decode errors
+            timeout=30
         )
         
         if result.returncode == 0:
             logger.info(f"Successfully stored {domain} as {classification}")
             return True, f"Domain {domain} stored as {classification}"
         else:
-            logger.error(f"Failed to store {domain}: {result.stderr}")
-            return False, f"Storage failed: {result.stderr}"
+            logger.error(f"Failed to store {domain}: {result.stderr[:200]}")
+            return False, f"Storage failed: {result.stderr[:200]}"
     except Exception as e:
         logger.error(f"Error storing to blockchain: {e}")
         return False, f"Error: {e}"
@@ -326,29 +345,82 @@ def store_classification_to_blockchain(domain: str, is_spam: bool, reason: str, 
 #     """Report domain to blockchain - alias for store_classification_to_blockchain"""
 #     return store_classification_to_blockchain(domain, is_spam, reason, final_risk_score)
 
+def extract_domains_from_urls(urls: List[str]) -> List[str]:
+    """Extract clean domains from list of URLs"""
+    domains = []
+    for url in urls:
+        try:
+            if not url.startswith(('http://', 'https://')):
+                url = 'http://' + url
+            parsed = urlparse(url)
+            if parsed.netloc:
+                domain = parsed.netloc.lower()
+                # Remove www. prefix
+                if domain.startswith('www.'):
+                    domain = domain[4:]
+                # Remove port if present
+                if ':' in domain:
+                    domain = domain.split(':')[0]
+                if domain:
+                    domains.append(domain)
+        except Exception as e:
+            logger.warning(f"Could not parse URL {url}: {e}")
+            continue
+    return domains
+
+def extract_domain_from_email(email_address: str) -> Optional[str]:
+    """Extract domain from email address"""
+    try:
+        if '@' in email_address:
+            domain = email_address.split('@')[-1].strip().lower()
+            # Remove any trailing > or brackets
+            domain = domain.rstrip('>').strip()
+            return domain if domain else None
+    except Exception as e:
+        logger.warning(f"Could not extract domain from email {email_address}: {e}")
+    return None
+
 def get_domains_from_analysis_result(analysis_result: Dict) -> List[str]:
-    """Extract domains from analysis result"""
+    """
+    Extract all domains from analysis result including:
+    1. Sender email domain
+    2. URL domains from email body
+    3. Domains from blockchain signals
+    """
     domains = []
     try:
-        # Extract from blockchain_signals
-        blockchain_signals = analysis_result.get("blockchain_signals", {})
-        domain_classifications = blockchain_signals.get("domain_classifications", {})
-        domains.extend(domain_classifications.keys())
+        # 1. Extract sender domain from email address
+        sender = analysis_result.get("sender", "")
+        if sender:
+            sender_domain = extract_domain_from_email(sender)
+            if sender_domain:
+                domains.append(sender_domain)
+                logger.debug(f"Extracted sender domain: {sender_domain}")
         
-        # Extract from details if available
+        # 2. Extract from details if available
         details = analysis_result.get("details", {})
         if "domains" in details:
-            domains.extend(details["domains"])
+            domains.extend(details.get("domains", []))
         
-        # Extract from URLs
+        # 3. Extract from URLs
         if "urls" in details:
-            extracted_domains = extract_domains_from_urls(details["urls"])
+            extracted_domains = extract_domains_from_urls(details.get("urls", []))
             domains.extend(extracted_domains)
+        
+        # 4. Extract from blockchain_signals
+        blockchain_signals = details.get("blockchain_signals", {})
+        if blockchain_signals:
+            domain_classifications = blockchain_signals.get("domain_classifications", {})
+            domains.extend(domain_classifications.keys())
             
     except Exception as e:
         logger.error(f"Error extracting domains from analysis result: {e}")
     
-    return list(set(domains))  # Remove duplicates
+    # Remove duplicates, empty strings, and None values
+    unique_domains = list(set(filter(None, domains)))
+    logger.info(f"Extracted {len(unique_domains)} unique domain(s): {unique_domains}")
+    
+    return unique_domains
 
 def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[float, Dict[str, Any]]:
     """Compute final risk score using all available methods"""
@@ -366,58 +438,112 @@ def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[
         # Extract URLs and domains
         full_content = f"{subject} {body}"
         urls = extract_urls_from_content(full_content)
+        logger.info(f"Extracted {len(urls)} URLs from content")
+        
         domains = extract_domains_from_urls(urls)
         
-        # ML Content Analysis
-        if body:
-            content_prob, content_conf = analyze_content_with_ml(body)
-            logger.info(f"Content analysis: prob={content_prob:.3f}, conf={content_conf:.3f}")
+        # Also extract sender domain
+        if sender:
+            sender_domain = extract_domain_from_email(sender)
+            if sender_domain and sender_domain not in domains:
+                domains.append(sender_domain)
+                logger.info(f"Added sender domain: {sender_domain}")
         
-        # ML URL Analysis
-        if urls:
-            url_prob = analyze_urls_with_ml(urls)
-            logger.info(f"URL analysis: prob={url_prob:.3f}")
+        logger.info(f"Total domains for blockchain query: {domains}")
         
-        # LLM Analysis
-        llm_score, llm_reason, llm_conf = analyze_with_llm(body, sender, subject)
-        logger.info(f"LLM analysis: score={llm_score:.3f}, conf={llm_conf:.3f}")
-        
-        # Blockchain Analysis
+        # ===== BLOCKCHAIN FIRST STRATEGY =====
+        # Check blockchain BEFORE doing expensive LLM analysis
+        # If blockchain has classification, use it and skip LLM
         blockchain_weight = 0.0
+        blockchain_spam_signal = False
+        blockchain_ham_signal = False
         domain_reputations = {}
         domain_classifications = {}
+        blockchain_found = False
         
+        logger.info(f"🔍 Checking blockchain for {len(domains)} domain(s)...")
         for domain in domains:
             reputation = get_blockchain_domain_reputation(domain)
             domain_reputations[domain] = reputation
+            logger.info(f"Blockchain query for '{domain}': exists={reputation.get('exists', False)}, consensus={reputation.get('consensus', 'none')}")
+            
             if reputation.get("exists", False):
-                blockchain_weight = 0.3  # Increase weight if we have blockchain data
+                blockchain_found = True
+                blockchain_weight = 0.7  # HIGH weight when blockchain data exists
                 is_spam = reputation.get("consensus") == "spam"
+                
+                if is_spam:
+                    blockchain_spam_signal = True
+                else:
+                    blockchain_ham_signal = True
+                
                 domain_classifications[domain] = {
                     "classification": "spam" if is_spam else "ham",
                     "confidence": 0.9,
                     "reputation_score": reputation.get("reputation_score", 50)
                 }
         
+        # If blockchain found, SKIP expensive LLM analysis
+        if blockchain_found:
+            logger.info("✅ Blockchain classification found - SKIPPING LLM analysis")
+            llm_reason = "Skipped - using blockchain consensus"
+            llm_conf = 0.9
+            # LLM score matches blockchain (0.0 for HAM, 1.0 for SPAM)
+            llm_score = 1.0 if blockchain_spam_signal else 0.0
+        else:
+            logger.info("⚠️ No blockchain data - running LLM analysis...")
+            # LLM Analysis (only if blockchain not found)
+            llm_score, llm_reason, llm_conf = analyze_with_llm(body, sender, subject)
+            logger.info(f"LLM analysis: score={llm_score:.3f}, conf={llm_conf:.3f}")
+        
+        # ML Content Analysis (lightweight, always run)
+        if body:
+            content_prob, content_conf = analyze_content_with_ml(body)
+            logger.info(f"Content analysis: prob={content_prob:.3f}, conf={content_conf:.3f}")
+        
+        # ML URL Analysis (lightweight, always run)
+        if urls:
+            url_prob = analyze_urls_with_ml(urls)
+            logger.info(f"URL analysis: prob={url_prob:.3f}")
+        
         # Compute weighted final score
-        weights = {
-            'content': 0.3,
-            'url': 0.2,
-            'llm': 0.5 - blockchain_weight,
-            'blockchain': blockchain_weight
-        }
+        if blockchain_found:
+            # When blockchain data exists, trust it heavily
+            weights = {
+                'content': 0.1,
+                'url': 0.1,
+                'llm': 0.1,  # Minimal weight (llm_score matches blockchain anyway)
+                'blockchain': 0.7  # HIGH trust in blockchain consensus
+            }
+        else:
+            # When no blockchain data, rely on ML + LLM
+            weights = {
+                'content': 0.3,
+                'url': 0.2,
+                'llm': 0.5,
+                'blockchain': 0.0
+            }
         
         # Normalize weights
         total_weight = sum(weights.values())
         weights = {k: v/total_weight for k, v in weights.items()}
+        
+        # Calculate blockchain contribution to risk score
+        blockchain_risk = 0.5  # Default neutral if no blockchain data
+        if blockchain_spam_signal:
+            blockchain_risk = 1.0  # High risk if marked as spam
+        elif blockchain_ham_signal:
+            blockchain_risk = 0.0  # Low risk if marked as legitimate
         
         # Calculate final score
         final_risk = (
             weights['content'] * content_prob +
             weights['url'] * url_prob +
             weights['llm'] * llm_score +
-            weights['blockchain'] * (1.0 if any(rep.get("consensus") == "spam" for rep in domain_reputations.values()) else 0.0)
+            weights['blockchain'] * blockchain_risk
         )
+        
+        logger.info(f"Score breakdown: content={content_prob:.3f}*{weights['content']:.2f}, url={url_prob:.3f}*{weights['url']:.2f}, llm={llm_score:.3f}*{weights['llm']:.2f}, blockchain={blockchain_risk:.3f}*{weights['blockchain']:.2f}")
         
         # Prepare detailed results
         details = {

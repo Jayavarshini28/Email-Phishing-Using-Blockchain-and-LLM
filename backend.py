@@ -7,15 +7,24 @@ from blockchain_integration import get_blockchain_instance
 import logging
 import re
 from urllib.parse import urlparse
+import sys
 
 app = Flask(__name__)
 CORS(app)  # allow cross-origin calls from extension (restrict in production)
+
+# Fix Flask reloader issue by excluding node_modules from watchdog
+if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    # Only configure on main process, not reloader subprocess
+    import pathlib
+    exclude_patterns = ['**/node_modules/**', '**/blockchain/node_modules/**', '**/__pycache__/**']
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 API_KEY = os.environ.get("EXT_API_KEY", "")
+print(f"API KEY: {API_KEY}")
 
 # Admin-only blockchain settings
 AUTO_REPORT_TO_BLOCKCHAIN = os.environ.get("AUTO_REPORT_CONFIDENT_CLASSIFICATIONS", "true").lower() == "true"
@@ -113,6 +122,7 @@ def analyze():
     # Simple API key check (improve in prod)
     if API_KEY:
         key = request.headers.get("x-api-key", "")
+        print(f"Request API KEY: {key}")
         if key != API_KEY:
             return jsonify({"error": "invalid api key"}), 403
 
@@ -156,7 +166,9 @@ def analyze():
         "llm_reason": llm_reason,
         "blockchain_signals": details.get("blockchain_signals", {}),
         "domain_classifications": details.get("domain_classifications", {}),
+        "blockchain_weight": details.get("blockchain_weight", 0.0),  # Add blockchain_weight to response
         "blockchain_available": details.get("blockchain_signals", {}).get("blockchain_available", False),
+        "domain_reputations": details.get("domain_reputations", {}),  # Add domain reputations for UI
         "auto_reported_domains": domains if AUTO_REPORT_TO_BLOCKCHAIN else [],
         "domains_found": len(domains)
     }
@@ -260,6 +272,149 @@ def bulk_store_domains():
         "source": "bulk_admin"
     })
 
+@app.route("/blockchain/bulk-report", methods=["POST"])
+def bulk_report_domains():
+    """
+    User feedback endpoint: Report domains to blockchain based on user classification
+    Extracts sender domain and URL domains from email analysis
+    """
+    if API_KEY:
+        key = request.headers.get("x-api-key", "")
+        if key != API_KEY:
+            return jsonify({"error": "invalid api key"}), 403
+    
+    data = request.get_json() or {}
+    analysis_result = data.get("analysis_result", {})
+    user_classification = data.get("user_classification", "ham")  # "spam" or "ham"
+    reason = data.get("reason", "User feedback from browser extension")
+    
+    # Debug: Log the received data structure
+    logger.info(f"📥 Received feedback request:")
+    logger.info(f"   Classification: {user_classification}")
+    logger.info(f"   Analysis result keys: {list(analysis_result.keys()) if isinstance(analysis_result, dict) else 'Not a dict'}")
+    
+    # Extract domains from analysis result
+    domains = []
+    
+    # 1. Extract sender domain from email (check multiple possible locations)
+    sender = (
+        analysis_result.get("sender") or 
+        (analysis_result.get("details", {}).get("sender") if isinstance(analysis_result, dict) else None)
+    )
+    
+    logger.info(f"   Sender found: {sender}")
+    
+    if sender and "@" in sender:
+        # Extract domain from email address (handle <email> format too)
+        email_match = sender
+        if "<" in sender and ">" in sender:
+            # Handle format like: "Name <email@domain.com>"
+            email_match = sender.split("<")[1].split(">")[0]
+        
+        sender_domain = email_match.split("@")[-1].strip().lower()
+        # Clean up any trailing characters
+        sender_domain = sender_domain.rstrip('>').strip()
+        
+        if sender_domain:
+            domains.append(sender_domain)
+            logger.info(f"📧 Extracted sender domain: {sender_domain}")
+    
+    # 2. Extract domains from the analysis details
+    details = analysis_result.get("details", {}) if isinstance(analysis_result, dict) else {}
+    
+    # Try to get domains from various locations in details
+    if isinstance(details, dict):
+        # Direct domains field
+        if "domains" in details and details["domains"]:
+            url_domains = details.get("domains", [])
+            domains.extend(url_domains)
+            logger.info(f"🔗 Found {len(url_domains)} domains in details.domains: {url_domains}")
+        
+        # URLs field - extract domains from URLs
+        if "urls" in details and details["urls"]:
+            urls = details.get("urls", [])
+            logger.info(f"🌐 Found {len(urls)} URLs, extracting domains...")
+            for url in urls:
+                try:
+                    if not url.startswith(('http://', 'https://')):
+                        url = 'http://' + url
+                    parsed = urlparse(url)
+                    if parsed.netloc:
+                        domain = parsed.netloc.lower()
+                        if domain.startswith('www.'):
+                            domain = domain[4:]
+                        if ':' in domain:  # Remove port
+                            domain = domain.split(':')[0]
+                        if domain:
+                            domains.append(domain)
+                            logger.info(f"   Extracted from URL: {domain}")
+                except Exception as e:
+                    logger.warning(f"   Could not parse URL {url}: {e}")
+        
+        # Blockchain signals
+        blockchain_signals = details.get("blockchain_signals", {})
+        if isinstance(blockchain_signals, dict):
+            domain_classifications = blockchain_signals.get("domain_classifications", {})
+            if domain_classifications:
+                domains.extend(domain_classifications.keys())
+                logger.info(f"⛓️ Found {len(domain_classifications)} domains in blockchain signals")
+    
+    # Remove duplicates and empty strings
+    domains = list(set(filter(None, domains)))
+    
+    if not domains:
+        logger.warning("⚠️ No domains found in user feedback request")
+        logger.warning(f"   Full data structure: {data}")
+        return jsonify({
+            "error": "No domains found to report",
+            "hint": "Make sure the email analysis includes sender or URLs",
+            "total_domains": 0,
+            "successful_reports": 0
+        }), 400
+    
+    logger.info(f"📊 User feedback: Reporting {len(domains)} domain(s) as {user_classification}")
+    logger.info(f"📝 Domains to report: {domains}")
+    
+    # Report each domain to blockchain
+    results = []
+    is_spam = user_classification == "spam"
+    final_risk = analysis_result.get("final_risk", 0.9 if is_spam else 0.1)
+    
+    import time
+    
+    for idx, domain in enumerate(domains):
+        # Add small delay between submissions to avoid cooldown issues
+        if idx > 0:
+            time.sleep(0.5)  # 500ms delay between submissions
+            
+        success, message = store_classification_to_blockchain(
+            domain=domain,
+            is_spam=is_spam,
+            reason=reason,
+            final_risk_score=final_risk
+        )
+        results.append({
+            "domain": domain,
+            "success": success,
+            "message": message
+        })
+        
+        if success:
+            logger.info(f"✅ Reported {domain} as {user_classification}")
+        else:
+            logger.warning(f"❌ Failed to report {domain}: {message}")
+    
+    successful_reports = sum(1 for r in results if r["success"])
+    
+    return jsonify({
+        "results": results,
+        "classification": user_classification,
+        "total_domains": len(domains),
+        "successful_reports": successful_reports,
+        "domains_reported": [r["domain"] for r in results if r["success"]],
+        "source": "user_feedback"
+    })
+
 @app.route("/admin/blockchain/report", methods=["POST"])
 def admin_force_report():
     """Force report domains to blockchain (admin-only endpoint)"""
@@ -290,9 +445,9 @@ def admin_force_report():
     
     return jsonify({
         "results": results,
+        "classification": "spam" if is_spam else "ham",
         "total_domains": len(domains),
         "successful_reports": sum(1 for r in results if r["success"]),
-        "classification": "spam" if is_spam else "ham",
         "source": "admin_force"
     })
 
@@ -331,4 +486,17 @@ if __name__ == "__main__":
     logger.info(f"📊 Auto-reporting: {AUTO_REPORT_TO_BLOCKCHAIN}")
     logger.info(f"🎯 Min confidence: {MIN_CONFIDENCE_FOR_BLOCKCHAIN}")
     
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    # Run with reloader that excludes node_modules to prevent OSError
+    extra_files = []
+    extra_dirs = []
+    
+    # Use stat reloader instead of watchdog to avoid socket errors
+    app.run(
+        host="0.0.0.0",
+        port=8080,
+        debug=True,
+        use_reloader=True,
+        reloader_type='stat',  # Use stat reloader instead of watchdog
+        extra_files=extra_files,
+        exclude_patterns=['**/node_modules/**', '**/blockchain/node_modules/**']
+    )

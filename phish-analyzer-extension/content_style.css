@@ -1,15 +1,17 @@
 /* --- Overlay Panel --- */
 #phish-analyzer-panel {
   position: fixed;
-  right: 16px;
-  bottom: 24px;
+  right: 20px;
+  top: 80px;
   z-index: 2147483647;
   background: #fff;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
-  padding: 18px;
-  width: 380px;
-  font-family: "Segoe UI", Arial, sans-serif;
+  border: 2px solid #1976d2;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  padding: 20px;
+  width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
   border-radius: 12px;
   animation: phish-fadein 0.3s ease;
   line-height: 1.5;
@@ -42,12 +44,23 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #e8f0fe;
 }
 
 #phish-analyzer-panel .phish-title {
-  font-size: 18px;
-  font-weight: bold;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1976d2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#phish-analyzer-panel .phish-title::before {
+  content: "🛡️";
+  font-size: 24px;
 }
 
 /* --- Risk Badge --- */
@@ -77,12 +90,24 @@
 /* --- Close Button --- */
 #phish-analyzer-panel #phish-close {
   cursor: pointer;
-  color: #777;
-  font-size: 20px;
-  font-weight: bold;
+  color: #666;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  transition: all 0.2s ease;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: transparent;
+  text-decoration: none;
 }
 #phish-analyzer-panel #phish-close:hover {
-  color: #000;
+  color: #d93025;
+  background: #fde8e6;
+  transform: rotate(90deg);
 }
 
 /* --- Floating Analyze Button --- */
@@ -139,6 +164,83 @@
   100% { transform: rotate(360deg);}
 }
 @keyframes phish-fadein {
-  from { opacity: 0; transform: translateY(8px);}
-  to { opacity: 1; transform: translateY(0);}
+  from { opacity: 0; transform: scale(0.95) translateY(-10px);}
+  to { opacity: 1; transform: scale(1) translateY(0);}
+}
+@keyframes phish-fadeout {
+  from { opacity: 1; transform: scale(1);}
+  to { opacity: 0; transform: scale(0.95);}
+}
+
+/* Scrollbar styling for panel */
+#phish-analyzer-panel::-webkit-scrollbar,
+.phish-content-scrollable::-webkit-scrollbar {
+  width: 10px;
+}
+#phish-analyzer-panel::-webkit-scrollbar-track,
+.phish-content-scrollable::-webkit-scrollbar-track {
+  background: #f1f3f4;
+  border-radius: 5px;
+}
+#phish-analyzer-panel::-webkit-scrollbar-thumb,
+.phish-content-scrollable::-webkit-scrollbar-thumb {
+  background: #1976d2;
+  border-radius: 5px;
+}
+#phish-analyzer-panel::-webkit-scrollbar-thumb:hover,
+.phish-content-scrollable::-webkit-scrollbar-thumb:hover {
+  background: #1565c0;
+}
+
+/* Content area styling */
+.phish-content-scrollable {
+  scrollbar-width: thin;
+  scrollbar-color: #1976d2 #f1f3f4;
+}
+
+/* Ensure text doesn't overflow */
+#phish-analyzer-panel * {
+  box-sizing: border-box;
+}
+
+#phish-reasoning {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+#phish-actions li {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Feedback button hover effects */
+#feedback-safe:hover {
+  background: #137333 !important;
+  color: #fff !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(19, 115, 51, 0.3);
+}
+
+#feedback-phishing:hover {
+  background: #d93025 !important;
+  color: #fff !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(217, 48, 37, 0.3);
+}
+
+/* Details/Summary styling */
+details summary {
+  user-select: none;
+  outline: none;
+}
+
+details summary:hover {
+  color: #1565c0;
+}
+
+details[open] summary {
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 8px;
 }

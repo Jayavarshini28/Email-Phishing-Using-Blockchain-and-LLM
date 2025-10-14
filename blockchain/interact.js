@@ -68,36 +68,63 @@ class DomainClassificationContract {
     }
   }
 
-  async classifyDomain(domain, isSpam, reason = "") {
-    try {
-      if (!this.contract) {
-        throw new Error(
-          "Contract not initialized. Please set CONTRACT_ADDRESS in .env"
+  async classifyDomain(domain, isSpam, reason = "", maxRetries = 3) {
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        if (!this.contract) {
+          throw new Error(
+            "Contract not initialized. Please set CONTRACT_ADDRESS in .env"
+          );
+        }
+
+        console.log(
+          `📝 Classifying domain: ${domain} as ${isSpam ? "SPAM" : "HAM"} (Attempt ${attempt}/${maxRetries})`
         );
+
+        const tx = await this.contract.classifyDomain(domain, isSpam, reason);
+        console.log(`⏳ Transaction submitted: ${tx.hash}`);
+
+        const receipt = await tx.wait();
+        console.log(`✅ Transaction confirmed in block: ${receipt.blockNumber}`);
+
+        return {
+          success: true,
+          txHash: tx.hash,
+          blockNumber: receipt.blockNumber,
+        };
+      } catch (error) {
+        const isCooldownError = error.message.includes("cooldown") || 
+                               error.message.includes("Submission cooldown active");
+        
+        if (isCooldownError && attempt < maxRetries) {
+          const waitTime = 2000 * attempt; // 2s, 4s, 6s
+          console.log(`⏰ Cooldown active, waiting ${waitTime/1000}s before retry...`);
+          await delay(waitTime);
+          continue; // Retry
+        }
+        
+        console.error(`❌ Classification failed (attempt ${attempt}/${maxRetries}):`, error.message);
+        
+        if (attempt === maxRetries) {
+          return {
+            success: false,
+            error: error.message,
+          };
+        }
+        
+        // Wait before next retry for other errors
+        if (attempt < maxRetries) {
+          await delay(1000);
+        }
       }
-
-      console.log(
-        `📝 Classifying domain: ${domain} as ${isSpam ? "SPAM" : "HAM"}`
-      );
-
-      const tx = await this.contract.classifyDomain(domain, isSpam, reason);
-      console.log(`⏳ Transaction submitted: ${tx.hash}`);
-
-      const receipt = await tx.wait();
-      console.log(`✅ Transaction confirmed in block: ${receipt.blockNumber}`);
-
-      return {
-        success: true,
-        txHash: tx.hash,
-        blockNumber: receipt.blockNumber,
-      };
-    } catch (error) {
-      console.error("❌ Classification failed:", error.message);
-      return {
-        success: false,
-        error: error.message,
-      };
     }
+    
+    return {
+      success: false,
+      error: "Max retries exceeded",
+    };
   }
 
   async getDomainClassification(domain) {
@@ -272,6 +299,112 @@ class DomainClassificationContract {
       return { exists: false };
     }
   }
+
+  async listAllDomains(limit = 100) {
+    try {
+      if (!this.contract) {
+        throw new Error("Contract not initialized");
+      }
+
+      console.log(`📋 Fetching all classified domains (limit: ${limit})...`);
+
+      // Query DomainClassified events from the contract
+      const filter = this.contract.filters.DomainClassified();
+      const events = await this.contract.queryFilter(filter, 0, "latest");
+
+      if (events.length === 0) {
+        console.log("📭 No domains found in blockchain");
+        return [];
+      }
+
+      console.log(`\n✅ Found ${events.length} classification events\n`);
+      console.log("⏳ Decoding domain names from transactions...");
+
+      // Group events by domain (keep latest classification for each domain)
+      const domainMap = new Map();
+      
+      for (const event of events) {
+        // Since domain is indexed, we need to decode from transaction data
+        try {
+          const tx = await this.provider.getTransaction(event.transactionHash);
+          
+          if (tx && tx.data) {
+            // Decode the transaction data to get the actual domain name
+            const iface = new ethers.Interface(this.contractABI);
+            const decoded = iface.parseTransaction({ data: tx.data, value: tx.value });
+            
+            if (decoded && decoded.args && decoded.args.length > 0) {
+              const domain = decoded.args[0]; // First arg is domain name
+              const isSpam = event.args.isSpam;
+              const reporter = event.args.reporter;
+              const timestamp = Number(event.args.timestamp);
+              const blockNumber = event.blockNumber;
+
+              // Keep the latest classification for each domain
+              const domainKey = domain.toLowerCase();
+              if (!domainMap.has(domainKey) || domainMap.get(domainKey).blockNumber < blockNumber) {
+                domainMap.set(domainKey, {
+                  domain: domain,
+                  isSpam,
+                  reporter,
+                  timestamp,
+                  blockNumber,
+                  txHash: event.transactionHash
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to decode transaction ${event.transactionHash}:`, err.message);
+        }
+      }
+      
+      console.log(`✅ Decoded ${domainMap.size} unique domains\n`);
+      console.log("═".repeat(80));
+
+      // Convert to array and sort by timestamp (newest first)
+      const domains = Array.from(domainMap.values())
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, limit);
+
+      // Display results
+      let spamCount = 0;
+      let hamCount = 0;
+
+      domains.forEach((domainData, index) => {
+        // console.log(domainData);
+        const classification = domainData.isSpam ? "🔴 SPAM" : "🟢 HAM";
+        const date = new Date(domainData.timestamp * 1000).toLocaleString();
+        
+        if (domainData.isSpam) spamCount++;
+        else hamCount++;
+
+        // Convert domain to string if it's an object
+        const domainName = typeof domainData.domain === 'string' 
+          ? domainData.domain 
+          : domainData.domain.toString();
+
+        console.log(`\n${index + 1}. ${domainName}`);
+        console.log(`   Classification: ${classification}`);
+        console.log(`   Timestamp: ${date}`);
+        console.log(`   Reporter: ${domainData.reporter}`);
+        console.log(`   Block: ${domainData.blockNumber}`);
+        console.log(`   TX: ${domainData.txHash}`);
+      });
+
+      console.log("\n" + "═".repeat(80));
+      console.log(`\n📊 Summary:`);
+      console.log(`   Total Domains: ${domains.length}`);
+      console.log(`   🔴 Spam: ${spamCount}`);
+      console.log(`   🟢 Ham: ${hamCount}`);
+      console.log("");
+
+      return domains;
+    } catch (error) {
+      console.error("❌ Failed to list domains:", error.message);
+      return [];
+    }
+  }
 }
 
 // Test functions
@@ -349,6 +482,9 @@ if (args.length === 0) {
     "  node interact.js query <domain>             - Query domain classification"
   );
   console.log(
+    "  node interact.js list [limit]               - List all classified domains (default: 100)"
+  );
+  console.log(
     "  node interact.js stats                      - Get contract statistics"
   );
   console.log(
@@ -375,7 +511,11 @@ try {
         );
         process.exit(1);
       }
-      await contract.classifyDomain(args[1], args[2] === "true", args[3] || "");
+      const classifyResult = await contract.classifyDomain(args[1], args[2] === "true", args[3] || "");
+      if (!classifyResult.success) {
+        console.error(`❌ Failed to classify domain: ${classifyResult.error}`);
+        process.exit(1);
+      }
       break;
 
     case "query":
@@ -389,6 +529,11 @@ try {
       } else {
         console.log("UNKNOWN");
       }
+      break;
+
+    case "list":
+      const limit = args.length > 1 ? parseInt(args[1]) : 100;
+      await contract.listAllDomains(limit);
       break;
 
     case "stats":
@@ -406,7 +551,7 @@ try {
     default:
       console.log("Unknown command:", command);
       console.log(
-        "Available commands: test, classify, store, query, reputation, stats, check, cooldown"
+        "Available commands: test, classify, query, list, stats, check, cooldown"
       );
       process.exit(1);
   }
