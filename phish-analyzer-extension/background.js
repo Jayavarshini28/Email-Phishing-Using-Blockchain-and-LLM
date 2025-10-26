@@ -21,6 +21,7 @@ async function handleAnalyze(payload) {
     body: sendFullBody ? payload.body : "",
     urls: payload.urls || [],
     privacy_minimized: !sendFullBody,
+    force_llm: payload.force_llm || false,  // Pass through force_llm flag
   };
 
   const resp = await fetch(FIXED_BACKEND_URL, {
@@ -38,6 +39,10 @@ async function handleAnalyze(payload) {
     final_risk: data.final_risk,
     llm_reason: data.llm_reason || "",
     llm_actions: data.llm_actions || data.actions || [],
+    blockchain_signals: data.blockchain_signals || {},
+    sender_reputation: data.sender_reputation || {},
+    from_previous_incident: data.from_previous_incident || false,
+    force_llm_used: data.force_llm_used || false,
   };
   result.label =
     result.final_risk < 0.3

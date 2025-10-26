@@ -265,7 +265,7 @@ def analyze_with_llm(content: str, sender: str = "", subject: str = "") -> Tuple
         return 0.5, f"LLM analysis failed: {str(e)}", 0.5
 
 def get_blockchain_domain_reputation(domain: str) -> Dict:
-    """Get domain reputation from blockchain"""
+    """Get sender email reputation from blockchain (domain parameter name kept for compatibility)"""
     try:
         script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
         if not os.path.exists(script_path):
@@ -292,17 +292,19 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
             logger.debug(f"Blockchain query output for {domain}: {len(lines)} lines, last='{classification}'")
             
             if classification in ['SPAM', 'HAM']:
-                logger.info(f"✅ Found blockchain record for {domain}: {classification}")
+                logger.info(f"✅ Found blockchain record for sender {domain}: {classification}")
                 return {
                     "exists": True,
                     "reputation_score": 10 if classification == 'SPAM' else 90,
                     "consensus": classification.lower(),
                     "spam_votes": 1 if classification == 'SPAM' else 0,
                     "ham_votes": 1 if classification == 'HAM' else 0,
-                    "total_reports": 1
+                    "total_reports": 1,
+                    "source": "blockchain",
+                    "from_previous_incident": True  # Flag to indicate this is from historical data
                 }
             else:
-                logger.info(f"No blockchain record for {domain} (got '{classification}')")
+                logger.info(f"No blockchain record for sender {domain} (got '{classification}')")
                 return {"exists": False}
         else:
             if result.stderr:
@@ -316,7 +318,7 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
         return {"exists": False}
 
 def store_classification_to_blockchain(domain: str, is_spam: bool, reason: str, final_risk_score: Optional[float] = None) -> Tuple[bool, str]:
-    """Store classification to blockchain"""
+    """Store sender email classification to blockchain (domain parameter name kept for compatibility)"""
     try:
         script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
         if not os.path.exists(script_path):
@@ -328,7 +330,7 @@ def store_classification_to_blockchain(domain: str, is_spam: bool, reason: str, 
         # Truncate reason to avoid command line length issues
         truncated_reason = reason[:200] if len(reason) > 200 else reason
         
-        logger.info(f"Attempting blockchain storage for {domain} (spam={is_spam})")
+        logger.info(f"Attempting blockchain storage for sender email {domain} (spam={is_spam})")
         
         # Use UTF-8 encoding to avoid Windows CP1252 Unicode errors
         # Increased timeout to 60 seconds for blockchain transactions
@@ -343,8 +345,8 @@ def store_classification_to_blockchain(domain: str, is_spam: bool, reason: str, 
         )
         
         if result.returncode == 0:
-            logger.info(f"✅ Successfully stored {domain} as {classification}")
-            return True, f"Domain {domain} stored as {classification}"
+            logger.info(f"✅ Successfully stored sender email {domain} as {classification}")
+            return True, f"Sender email {domain} stored as {classification}"
         else:
             error_msg = result.stderr[:200] if result.stderr else "Unknown error"
             logger.error(f"❌ Failed to store {domain}: {error_msg}")
@@ -437,8 +439,15 @@ def get_domains_from_analysis_result(analysis_result: Dict) -> List[str]:
     
     return unique_domains
 
-def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[float, Dict[str, Any]]:
-    """Compute final risk score using all available methods"""
+def compute_final_risk(body: str, sender: str = "", subject: str = "", force_llm: bool = False) -> Tuple[float, Dict[str, Any]]:
+    """Compute final risk score using all available methods
+    
+    Args:
+        body: Email body content
+        sender: Sender email address
+        subject: Email subject
+        force_llm: If True, always run LLM analysis even if blockchain data exists
+    """
     try:
         logger.info("Computing final risk score...")
         
@@ -457,34 +466,35 @@ def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[
         
         domains = extract_domains_from_urls(urls)
         
-        # Also extract sender domain
-        if sender:
-            sender_domain = extract_domain_from_email(sender)
-            if sender_domain and sender_domain not in domains:
-                domains.append(sender_domain)
-                logger.info(f"Added sender domain: {sender_domain}")
+        logger.info(f"Total URL domains found: {domains}")
         
-        logger.info(f"Total domains for blockchain query: {domains}")
-        
-        # ===== BLOCKCHAIN FIRST STRATEGY =====
-        # Check blockchain BEFORE doing expensive LLM analysis
-        # If blockchain has classification, use it and skip LLM
+        # ===== BLOCKCHAIN FIRST STRATEGY (CHECK SENDER EMAIL) =====
+        # Check blockchain for SENDER EMAIL ONLY, not domains
+        # If blockchain has classification for sender, show it but allow LLM override
         blockchain_weight = 0.0
         blockchain_spam_signal = False
         blockchain_ham_signal = False
-        domain_reputations = {}
-        domain_classifications = {}
+        sender_reputation = {}
+        sender_classification = {}
         blockchain_found = False
+        from_previous_incident = False
         
-        logger.info(f"🔍 Checking blockchain for {len(domains)} domain(s)...")
-        for domain in domains:
-            reputation = get_blockchain_domain_reputation(domain)
-            domain_reputations[domain] = reputation
-            logger.info(f"Blockchain query for '{domain}': exists={reputation.get('exists', False)}, consensus={reputation.get('consensus', 'none')}")
+        # Clean sender email
+        sender_email = sender
+        if sender and '@' in sender:
+            # Handle format like "Name <email@domain.com>"
+            if '<' in sender and '>' in sender:
+                sender_email = sender.split('<')[1].split('>')[0].strip()
+            sender_email = sender_email.lower()
+            
+            logger.info(f"🔍 Checking blockchain for sender email: {sender_email}")
+            reputation = get_blockchain_domain_reputation(sender_email)
+            sender_reputation = reputation
+            logger.info(f"Blockchain query for sender '{sender_email}': exists={reputation.get('exists', False)}, consensus={reputation.get('consensus', 'none')}")
             
             if reputation.get("exists", False):
                 blockchain_found = True
-                blockchain_weight = 0.7  # HIGH weight when blockchain data exists
+                from_previous_incident = reputation.get("from_previous_incident", False)
                 is_spam = reputation.get("consensus") == "spam"
                 
                 if is_spam:
@@ -492,24 +502,33 @@ def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[
                 else:
                     blockchain_ham_signal = True
                 
-                domain_classifications[domain] = {
+                sender_classification = {
                     "classification": "spam" if is_spam else "ham",
                     "confidence": 0.9,
-                    "reputation_score": reputation.get("reputation_score", 50)
+                    "reputation_score": reputation.get("reputation_score", 50),
+                    "from_previous_incident": from_previous_incident
                 }
         
-        # If blockchain found, SKIP expensive LLM analysis
-        if blockchain_found:
-            logger.info("✅ Blockchain classification found - SKIPPING LLM analysis")
-            llm_reason = "Skipped - using blockchain consensus"
+        # If blockchain found and NOT forcing LLM, use blockchain classification
+        if blockchain_found and not force_llm:
+            logger.info("✅ Blockchain classification found for sender - using previous incident data")
+            blockchain_weight = 0.7  # HIGH weight when blockchain data exists
+            llm_reason = f"Based on previous incidents, this sender was marked as {'spam' if blockchain_spam_signal else 'legitimate'}. Click 'Run LLM Analysis' if you think this is incorrect."
             llm_conf = 0.9
             # LLM score matches blockchain (0.0 for HAM, 1.0 for SPAM)
             llm_score = 1.0 if blockchain_spam_signal else 0.0
         else:
-            logger.info("⚠️ No blockchain data - running LLM analysis...")
-            # LLM Analysis (only if blockchain not found)
+            if blockchain_found and force_llm:
+                logger.info("⚠️ Blockchain data found but force_llm=True - running fresh LLM analysis...")
+            else:
+                logger.info("⚠️ No blockchain data for sender - running LLM analysis...")
+            # LLM Analysis (if blockchain not found OR force_llm is True)
             llm_score, llm_reason, llm_conf = analyze_with_llm(body, sender, subject)
             logger.info(f"LLM analysis: score={llm_score:.3f}, conf={llm_conf:.3f}")
+            
+            # If we forced LLM, reduce blockchain weight
+            if blockchain_found and force_llm:
+                blockchain_weight = 0.2  # Lower weight when user explicitly requests fresh analysis
         
         # ML Content Analysis (lightweight, always run)
         if body:
@@ -522,13 +541,21 @@ def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[
             logger.info(f"URL analysis: prob={url_prob:.3f}")
         
         # Compute weighted final score
-        if blockchain_found:
-            # When blockchain data exists, trust it heavily
+        if blockchain_found and not force_llm:
+            # When blockchain data exists and not forcing LLM, trust it heavily
             weights = {
                 'content': 0.1,
                 'url': 0.1,
                 'llm': 0.1,  # Minimal weight (llm_score matches blockchain anyway)
                 'blockchain': 0.7  # HIGH trust in blockchain consensus
+            }
+        elif blockchain_found and force_llm:
+            # When forcing LLM despite blockchain, balance between fresh analysis and history
+            weights = {
+                'content': 0.2,
+                'url': 0.2,
+                'llm': 0.4,  # Trust fresh LLM analysis more
+                'blockchain': 0.2  # Some weight to blockchain history
             }
         else:
             # When no blockchain data, rely on ML + LLM
@@ -571,14 +598,17 @@ def compute_final_risk(body: str, sender: str = "", subject: str = "") -> Tuple[
             "llm_reason": llm_reason,
             "llm_actions": [llm_reason] if llm_reason else [],
             "blockchain_weight": float(blockchain_weight),
-            "domain_reputations": domain_reputations,
+            "sender_reputation": sender_reputation,
             "blockchain_signals": {
                 "blockchain_available": blockchain_weight > 0,
-                "domain_classifications": domain_classifications
+                "sender_classification": sender_classification,
+                "from_previous_incident": from_previous_incident
             },
             "urls": urls,
             "domains": domains,
-            "weights": weights
+            "weights": weights,
+            "sender": sender,
+            "force_llm_used": force_llm
         }
         
         logger.info(f"Final risk score: {final_risk:.3f}")

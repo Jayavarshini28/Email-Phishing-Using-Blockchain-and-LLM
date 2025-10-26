@@ -2,20 +2,21 @@
 pragma solidity ^0.8.19;
 
 /**
- * @title DomainClassification
- * @dev Simple blockchain cache for domain classifications (spam/ham)
+ * @title EmailClassification
+ * @dev Simple blockchain cache for email sender classifications (spam/ham)
  * Acts as a distributed lookup table, not a consensus system
+ * Stores classifications based on sender email address instead of domain
  */
 contract DomainClassification {
     
-    // Simple domain classification record
+    // Email sender classification record
     struct DomainRecord {
-        string domain;
+        string domain;          // Now stores sender email address
         bool isSpam;            // true = spam/phishing, false = ham/legitimate
         uint256 timestamp;      // When classification was stored
         address reporter;       // Who submitted this classification
         string reason;          // Optional reason for classification
-        bool exists;            // Whether domain exists in cache
+        bool exists;            // Whether email exists in cache
     }
     
     // Events
@@ -34,7 +35,7 @@ contract DomainClassification {
     );
     
     // State variables
-    mapping(string => DomainRecord) public domains;
+    mapping(string => DomainRecord) public domains;  // Maps sender email to classification
     mapping(address => uint256) public lastSubmissionTime;
     
     address public owner;
@@ -59,8 +60,8 @@ contract DomainClassification {
     }
     
     /**
-     * @dev Store or update domain classification
-     * @param _domain Domain name to classify
+     * @dev Store or update sender email classification
+     * @param _domain Sender email address to classify
      * @param _isSpam true if spam/phishing, false if legitimate
      * @param _reason Optional reason for classification
      */
@@ -69,7 +70,7 @@ contract DomainClassification {
         bool _isSpam,
         string memory _reason
     ) external canSubmit {
-        require(bytes(_domain).length > 0, "Domain cannot be empty");
+        require(bytes(_domain).length > 0, "Email address cannot be empty");
         
         bool isUpdate = domains[_domain].exists;
         bool oldClassification = domains[_domain].isSpam;
@@ -95,9 +96,9 @@ contract DomainClassification {
     }
     
     /**
-     * @dev Get domain classification from cache
-     * @param _domain Domain to query
-     * @return exists Whether domain exists in cache
+     * @dev Get sender email classification from cache
+     * @param _domain Sender email to query
+     * @return exists Whether sender email exists in cache
      * @return isSpam Classification (true = spam, false = ham)
      * @return timestamp When classification was stored
      * @return reporter Who submitted the classification
@@ -124,9 +125,9 @@ contract DomainClassification {
     }
     
     /**
-     * @dev Check if domain exists in cache (lightweight query)
-     * @param _domain Domain to check
-     * @return exists Whether domain is cached
+     * @dev Check if sender email exists in cache (lightweight query)
+     * @param _domain Sender email to check
+     * @return exists Whether sender email is cached
      * @return isSpam Classification if exists
      */
     function isDomainKnown(string memory _domain) 
@@ -137,7 +138,7 @@ contract DomainClassification {
     
     /**
      * @dev Get contract statistics
-     * @return totalDomains Total number of cached domains
+     * @return totalDomains Total number of cached sender emails
      * @return totalSubmitters Number of unique submitters
      */
     function getStats() external view returns (uint256, uint256) {
@@ -166,11 +167,11 @@ contract DomainClassification {
     }
     
     /**
-     * @dev Owner function to remove a domain (if needed)
-     * @param _domain Domain to remove
+     * @dev Owner function to remove a sender email (if needed)
+     * @param _domain Sender email to remove
      */
     function removeDomain(string memory _domain) external onlyOwner {
-        require(domains[_domain].exists, "Domain does not exist");
+        require(domains[_domain].exists, "Email does not exist");
         delete domains[_domain];
         totalDomains--;
     }

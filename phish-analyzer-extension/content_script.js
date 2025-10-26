@@ -1,5 +1,5 @@
 // content_script.js
-console.log("✅ Content script loaded into Gmail");
+console.log("Content script loaded into Gmail");
 
 (async () => {
   // Helper: find currently open Gmail message DOM (works on Gmail web view)
@@ -60,9 +60,12 @@ console.log("✅ Content script loaded into Gmail");
 
     // Blockchain information
     const blockchainData = result.blockchain_signals || {};
-    const domainReputations = result.domain_reputations || {};
+    const senderReputation = result.sender_reputation || {};
+    const senderClassification = blockchainData.sender_classification || {};
     const blockchainWeight = result.blockchain_weight || 0;
     const blockchainAvailable = blockchainWeight > 0;
+    const fromPreviousIncident = result.from_previous_incident || false;
+    const forceLlmUsed = result.force_llm_used || false;
 
     let panel = document.getElementById("phish-analyzer-panel");
     if (!panel) {
@@ -71,79 +74,46 @@ console.log("✅ Content script loaded into Gmail");
       document.body.appendChild(panel);
     }
 
-    // Fill content
-    const blockchainSection = blockchainAvailable
+    // Build blockchain section with previous incident warning
+    const blockchainSection = blockchainAvailable && fromPreviousIncident
       ? `
     <div style="margin-top:8px">
-      <details>
-        <summary style="cursor:pointer;font-weight:500;font-size:14px;">🔗 Blockchain Reputation</summary>
+      <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="font-weight:600;font-size:13px;color:#856404;margin-bottom:6px;">⚠️ Based on Previous Incidents</div>
+        <div style="font-size:12px;color:#856404;line-height:1.6;">
+          This sender was previously classified as <strong>${senderClassification.classification || 'unknown'}</strong>.
+          ${!forceLlmUsed ? 'If you believe this classification is incorrect, click "Run Fresh LLM Analysis" below.' : 'Fresh LLM analysis has been performed.'}
+        </div>
+      </div>
+      <details ${forceLlmUsed ? '' : 'open'}>
+        <summary style="cursor:pointer;font-weight:500;font-size:14px;">🔗 Sender Reputation</summary>
         <div style="margin-top:8px;color:#222;font-size:12px">
           <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-            <span>Domains Checked:</span>
-            <span style="font-weight:bold;">${
-              blockchainData.domains_checked || 0
-            }</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-            <span>Found in Blockchain:</span>
-            <span style="font-weight:bold;">${
-              blockchainData.domains_found || 0
-            }</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-            <span>Avg Reputation:</span>
-            <span style="font-weight:bold;">${(
-              blockchainData.avg_reputation || 50
-            ).toFixed(0)}/100</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
-            <span>Consensus:</span>
+            <span>Classification:</span>
             <span style="font-weight:bold;color:${
-              blockchainData.consensus_status === "legitimate"
-                ? "#137333"
-                : blockchainData.consensus_status === "malicious"
-                ? "#d93025"
-                : "#b26a00"
+              senderClassification.classification === "spam" ? "#d93025" : "#137333"
             };">
-              ${
-                (blockchainData.consensus_status || "unknown")
-                  .charAt(0)
-                  .toUpperCase() +
-                (blockchainData.consensus_status || "unknown").slice(1)
-              }
+              ${(senderClassification.classification || "unknown").toUpperCase()}
             </span>
           </div>
-          ${
-            Object.keys(domainReputations).length > 0
-              ? `
-            <div style="border-top:1px solid #eee;padding-top:6px;">
-              <strong>Domain Details:</strong>
-              ${Object.entries(domainReputations)
-                .map(([domain, rep]) =>
-                  rep.exists
-                    ? `
-                  <div style="margin:4px 0;padding:4px;background:#f8f9fa;border-radius:4px;">
-                    <div style="font-weight:500;">${domain}</div>
-                    <div style="font-size:11px;color:#666;">
-                      ${rep.reputation_score}/100 (${rep.consensus}) - 
-                      ${rep.spam_votes}🔻/${rep.ham_votes}✅
-                    </div>
-                  </div>
-                `
-                    : `
-                  <div style="margin:4px 0;padding:4px;background:#f8f9fa;border-radius:4px;">
-                    <div style="font-weight:500;">${domain}</div>
-                    <div style="font-size:11px;color:#666;">No blockchain data</div>
-                  </div>
-                `
-                )
-                .join("")}
-            </div>
-          `
-              : ""
-          }
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span>Confidence:</span>
+            <span style="font-weight:bold;">${((senderClassification.confidence || 0) * 100).toFixed(0)}%</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span>Reputation Score:</span>
+            <span style="font-weight:bold;">${senderClassification.reputation_score || 50}/100</span>
+          </div>
         </div>
       </details>
+    </div>
+  `
+      : blockchainAvailable
+      ? `
+    <div style="margin-top:8px">
+      <div style="font-size:12px;color:#666;">
+        ✅ Blockchain reputation checked - no previous incidents found
+      </div>
     </div>
   `
       : `
@@ -214,10 +184,15 @@ console.log("✅ Content script loaded into Gmail");
       
       <div style="margin-top:16px;border-top:2px solid #e8f0fe;padding-top:12px;">
         <div style="font-size:13px;color:#666;margin-bottom:8px;font-weight:600;">📊 Help improve accuracy:</div>
-        <div style="display:flex;gap:10px;">
+        <div style="display:flex;gap:10px;margin-bottom:${fromPreviousIncident && !forceLlmUsed ? '10px' : '0'};">
           <button id="feedback-safe" style="flex:1;padding:8px 12px;border:2px solid #137333;background:#e6f4ea;color:#137333;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">✅ Safe</button>
           <button id="feedback-phishing" style="flex:1;padding:8px 12px;border:2px solid #d93025;background:#fde8e6;color:#d93025;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">❌ Phishing</button>
         </div>
+        ${fromPreviousIncident && !forceLlmUsed ? `
+        <button id="run-llm-analysis" style="width:100%;padding:10px 12px;border:2px solid #1976d2;background:#e3f2fd;color:#1976d2;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;transition:all 0.2s;margin-top:8px;">
+          🔄 Run Fresh LLM Analysis
+        </button>
+        ` : ''}
       </div>
     </div>
   `;
@@ -298,33 +273,111 @@ console.log("✅ Content script loaded into Gmail");
     // Feedback buttons
     const feedbackSafeBtn = panel.querySelector("#feedback-safe");
     const feedbackPhishingBtn = panel.querySelector("#feedback-phishing");
+    const runLlmBtn = panel.querySelector("#run-llm-analysis");
 
     feedbackSafeBtn.onclick = () => submitFeedback(result, "ham");
     feedbackPhishingBtn.onclick = () => submitFeedback(result, "spam");
+    
+    // Run LLM Analysis button
+    if (runLlmBtn) {
+      runLlmBtn.onclick = () => runFreshLlmAnalysis();
+    }
 
     // Store result for feedback
     panel.analysisResult = result;
   }
 
+  // Function to run fresh LLM analysis (bypassing blockchain)
+  async function runFreshLlmAnalysis() {
+    const data = getGmailMessageData();
+    if (!data) {
+      alert("Could not extract email data. Please try again.");
+      return;
+    }
+    
+    // Show loading state
+    const panel = document.getElementById("phish-analyzer-panel");
+    if (panel) {
+      const llmBtn = panel.querySelector("#run-llm-analysis");
+      if (llmBtn) {
+        llmBtn.disabled = true;
+        llmBtn.innerHTML = `
+          <span class="phish-spinner" style="display:inline-block;width:12px;height:12px;border:2px solid #1976d2;border-top:2px solid transparent;border-radius:50%;animation:phish-spin 1s linear infinite;margin-right:8px;"></span>
+          Running LLM Analysis...
+        `;
+      }
+    }
+    
+    showSpinner();
+    
+    // Add force_llm flag to data
+    const dataWithForceLlm = { ...data, force_llm: true };
+    
+    // Send to background with force_llm flag
+    chrome.runtime.sendMessage(
+      { type: "analyze_email", payload: dataWithForceLlm },
+      (resp) => {
+        hideSpinner();
+        if (chrome.runtime.lastError) {
+          showOverlay({
+            final_risk: 0,
+            label: "Error",
+            llm_reason: chrome.runtime.lastError.message,
+            llm_actions: [],
+          });
+          return;
+        }
+        if (!resp || resp.error) {
+          showOverlay({
+            final_risk: 0,
+            label: "Error",
+            llm_reason: resp?.error || "unknown",
+            llm_actions: [],
+          });
+          return;
+        }
+        // Show overlay with fresh LLM results
+        showOverlay(resp.result || {});
+      }
+    );
+  }
+
   // Function to submit user feedback to blockchain
   async function submitFeedback(analysisResult, classification) {
     try {
-      // Show feedback in progress
       const panel = document.getElementById("phish-analyzer-panel");
+      let feedbackDiv = null;
+      
       if (panel) {
-        const feedbackDiv =
+        feedbackDiv =
           panel.querySelector(".feedback-buttons") ||
           panel.querySelector('[style*="Help improve accuracy"]')
             ?.parentElement;
+      }
+      
+      // Immediately disable buttons to prevent double-clicks
+      if (feedbackDiv) {
+        const safeBtn = feedbackDiv.querySelector("#feedback-safe");
+        const phishBtn = feedbackDiv.querySelector("#feedback-phishing");
+        if (safeBtn) safeBtn.disabled = true;
+        if (phishBtn) phishBtn.disabled = true;
+      }
+      
+      // Helper function to update status
+      const updateStatus = (emoji, message, color = "#666", showSpinner = false) => {
         if (feedbackDiv) {
           feedbackDiv.innerHTML = `
-          <div style="font-size:12px;color:#666;text-align:center;">
-            <span class="phish-spinner" style="display:inline-block;width:12px;height:12px;border:2px solid #ccc;border-top:2px solid #333;border-radius:50%;animation:phish-spin 1s linear infinite;margin-right:8px;"></span>
-            Submitting feedback...
+          <div style="font-size:13px;color:${color};text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;border:1px solid #e0e0e0;">
+            ${showSpinner ? `<span class="phish-spinner" style="display:inline-block;width:14px;height:14px;border:2px solid ${color};border-top:2px solid transparent;border-radius:50%;animation:phish-spin 1s linear infinite;margin-right:8px;vertical-align:middle;"></span>` : ''}
+            <strong>${emoji} ${message}</strong>
           </div>
         `;
         }
-      }
+      };
+      
+      // Step 1: Preparing data
+      updateStatus("📦", "Preparing feedback data...", "#1976d2", true);
+      await new Promise(resolve => setTimeout(resolve, 400));
 
       // Get user settings
       const settings = await new Promise((resolve) => {
@@ -347,12 +400,19 @@ console.log("✅ Content script loaded into Gmail");
         }
       };
 
-      console.log("📤 Submitting feedback with data:", {
-        sender: analysisData.sender,
-        urlCount: analysisData.details.urls.length,
-        domainCount: analysisData.details.domains.length,
-        classification: classification
-      });
+      // console.log("📤 Submitting feedback with data:", {
+      //   sender: analysisData.sender,
+      //   urlCount: analysisData.details.urls.length,
+      //   domainCount: analysisData.details.domains.length,
+      //   classification: classification
+      // });
+
+      // Step 2: Connecting to blockchain
+      updateStatus("🔗", "Connecting to blockchain...", "#1976d2", true);
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      // Step 3: Submitting to blockchain
+      updateStatus("⛓️", `Reporting sender as ${classification === 'spam' ? 'phishing' : 'safe'}...`, "#1976d2", true);
 
       // Submit feedback to blockchain via backend
       const response = await fetch(
@@ -373,52 +433,105 @@ console.log("✅ Content script loaded into Gmail");
 
       const result = await response.json();
 
+      // Step 4: Processing result
+      updateStatus("📊", "Processing response...", "#1976d2", true);
+      await new Promise(resolve => setTimeout(resolve, 400));
+
       // Show feedback result
-      if (panel) {
-        const feedbackDiv =
-          panel.querySelector(".feedback-buttons") ||
-          panel.querySelector('[style*="Submitting feedback"]')?.parentElement;
-        if (feedbackDiv) {
-          const isSuccess = result.successful_reports > 0;
-          const message = isSuccess
-            ? `✅ Reported ${result.successful_reports}/${result.total_domains} domains`
-            : "❌ Failed to submit feedback";
+      const isSuccess = result.successful_reports > 0;
+      const senderEmail = result.sender_reported || analysisData.sender || 'sender';
+      
+      if (isSuccess) {
+        updateStatus(
+          "✅", 
+          `Success! Reported "${senderEmail}" as ${classification === 'spam' ? '🚫 Phishing' : '✅ Safe'}`, 
+          "#137333", 
+          false
+        );
 
-          feedbackDiv.innerHTML = `
-          <div style="font-size:12px;color:${
-            isSuccess ? "#137333" : "#d93025"
-          };text-align:center;">
-            ${message}
-          </div>
-        `;
-
-          // Auto-hide after 3 seconds
-          setTimeout(() => {
-            if (feedbackDiv) {
-              feedbackDiv.innerHTML = `
-              <div style="font-size:12px;color:#666;text-align:center;">
-                Thank you for your feedback!
+        // Auto-restore buttons after 3 seconds
+        setTimeout(() => {
+          if (feedbackDiv) {
+            feedbackDiv.innerHTML = `
+              <div style="font-size:13px;color:#666;margin-bottom:8px;font-weight:600;">📊 Help improve accuracy:</div>
+              <div style="display:flex;gap:10px;">
+                <button id="feedback-safe" style="flex:1;padding:8px 12px;border:2px solid #137333;background:#e6f4ea;color:#137333;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">✅ Safe</button>
+                <button id="feedback-phishing" style="flex:1;padding:8px 12px;border:2px solid #d93025;background:#fde8e6;color:#d93025;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">❌ Phishing</button>
               </div>
             `;
-            }
-          }, 3000);
-        }
+            
+            // Re-attach handlers
+            const newSafeBtn = feedbackDiv.querySelector("#feedback-safe");
+            const newPhishingBtn = feedbackDiv.querySelector("#feedback-phishing");
+            if (newSafeBtn) newSafeBtn.onclick = () => submitFeedback(analysisResult, "ham");
+            if (newPhishingBtn) newPhishingBtn.onclick = () => submitFeedback(analysisResult, "spam");
+          }
+        }, 3000);
+      } else {
+        updateStatus(
+          "❌", 
+          `Failed: ${result.error || 'Unknown error'}`, 
+          "#d93025", 
+          false
+        );
+
+        // Auto-restore buttons after 3 seconds
+        setTimeout(() => {
+          if (feedbackDiv) {
+            feedbackDiv.innerHTML = `
+              <div style="font-size:13px;color:#666;margin-bottom:8px;font-weight:600;">📊 Help improve accuracy:</div>
+              <div style="display:flex;gap:10px;">
+                <button id="feedback-safe" style="flex:1;padding:8px 12px;border:2px solid #137333;background:#e6f4ea;color:#137333;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">✅ Safe</button>
+                <button id="feedback-phishing" style="flex:1;padding:8px 12px;border:2px solid #d93025;background:#fde8e6;color:#d93025;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">❌ Phishing</button>
+              </div>
+            `;
+            
+            // Re-attach handlers
+            const newSafeBtn = feedbackDiv.querySelector("#feedback-safe");
+            const newPhishingBtn = feedbackDiv.querySelector("#feedback-phishing");
+            if (newSafeBtn) newSafeBtn.onclick = () => submitFeedback(analysisResult, "ham");
+            if (newPhishingBtn) newPhishingBtn.onclick = () => submitFeedback(analysisResult, "spam");
+          }
+        }, 3000);
       }
     } catch (error) {
-      console.error("Failed to submit feedback:", error);
+      // console.error("Failed to submit feedback:", error);
 
       // Show error
       const panel = document.getElementById("phish-analyzer-panel");
       if (panel) {
         const feedbackDiv =
           panel.querySelector(".feedback-buttons") ||
-          panel.querySelector('[style*="Submitting feedback"]')?.parentElement;
+          panel.querySelector('[style*="Preparing feedback"]')?.parentElement ||
+          panel.querySelector('[style*="Connecting to blockchain"]')?.parentElement ||
+          panel.querySelector('[style*="Reporting sender"]')?.parentElement ||
+          panel.querySelector('[style*="Processing response"]')?.parentElement;
         if (feedbackDiv) {
           feedbackDiv.innerHTML = `
-          <div style="font-size:12px;color:#d93025;text-align:center;">
-            ❌ Blockchain not available
+          <div style="font-size:13px;color:#d93025;text-align:center;padding:12px;background:#fde8e6;border-radius:8px;border:1px solid #d93025;">
+            <strong>❌ Connection Error</strong><br>
+            <span style="font-size:11px;">Could not connect to backend. Please ensure the server is running.</span>
           </div>
         `;
+        
+          // Auto-restore buttons after 3 seconds
+          setTimeout(() => {
+            if (feedbackDiv) {
+              feedbackDiv.innerHTML = `
+                <div style="font-size:13px;color:#666;margin-bottom:8px;font-weight:600;">📊 Help improve accuracy:</div>
+                <div style="display:flex;gap:10px;">
+                  <button id="feedback-safe" style="flex:1;padding:8px 12px;border:2px solid #137333;background:#e6f4ea;color:#137333;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">✅ Safe</button>
+                  <button id="feedback-phishing" style="flex:1;padding:8px 12px;border:2px solid #d93025;background:#fde8e6;color:#d93025;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s;">❌ Phishing</button>
+                </div>
+              `;
+              
+              // Re-attach handlers
+              const newSafeBtn = feedbackDiv.querySelector("#feedback-safe");
+              const newPhishingBtn = feedbackDiv.querySelector("#feedback-phishing");
+              if (newSafeBtn) newSafeBtn.onclick = () => submitFeedback(analysisResult, "ham");
+              if (newPhishingBtn) newPhishingBtn.onclick = () => submitFeedback(analysisResult, "spam");
+            }
+          }, 3000);
         }
       }
     }

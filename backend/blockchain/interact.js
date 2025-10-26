@@ -80,7 +80,7 @@ class DomainClassificationContract {
         }
 
         console.log(
-          `📝 Classifying domain: ${domain} as ${isSpam ? "SPAM" : "HAM"} (Attempt ${attempt}/${maxRetries})`
+          `📝 Classifying sender email: ${domain} as ${isSpam ? "SPAM" : "HAM"} (Attempt ${attempt}/${maxRetries})`
         );
 
         const tx = await this.contract.classifyDomain(domain, isSpam, reason);
@@ -133,12 +133,12 @@ class DomainClassificationContract {
         throw new Error("Contract not initialized");
       }
 
-      console.log(`🔍 Querying domain: ${domain}`);
+      console.log(`🔍 Querying sender email: ${domain}`);
 
       const result = await this.contract.getDomainClassification(domain);
 
       if (result.exists) {
-        console.log(`📊 Domain found:`);
+        console.log(`📊 Sender email found:`);
         console.log(`   Classification: ${result.isSpam ? "SPAM" : "HAM"}`);
         console.log(
           `   Timestamp: ${new Date(
@@ -148,7 +148,7 @@ class DomainClassificationContract {
         console.log(`   Reporter: ${result.reporter}`);
         console.log(`   Reason: ${result.reason || "No reason provided"}`);
       } else {
-        console.log(`❓ Domain not found in blockchain cache`);
+        console.log(`❓ Sender email not found in blockchain cache`);
       }
 
       return {

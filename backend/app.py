@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-from utils import compute_final_risk, store_classification_to_blockchain, get_domains_from_analysis_result
+from utils import compute_final_risk, store_classification_to_blockchain, extract_domain_from_email
 # from blockchain_integration import get_blockchain_instance
 from blockchain_integration import get_blockchain_instance  
 import logging
@@ -58,13 +58,27 @@ def extract_domains_from_content(content):
     return list(domains)
 
 def auto_report_domains_to_blockchain(domains, final_risk, llm_reason="", sender=""):
-    """Automatically report domains to blockchain if confidence is high enough"""
+    """Automatically report sender email to blockchain if confidence is high enough
+    NOTE: 'domains' parameter is now used for sender email for backward compatibility
+    """
     if not AUTO_REPORT_TO_BLOCKCHAIN:
         logger.info("Auto-reporting to blockchain is disabled")
         return
     
-    if not domains:
-        logger.info("No domains to report")
+    # Extract sender email from sender parameter
+    sender_email = sender
+    if not sender_email:
+        logger.info("No sender email provided for auto-reporting")
+        return
+    
+    # Clean sender email
+    if '@' in sender_email:
+        # Handle format like "Name <email@domain.com>"
+        if '<' in sender_email and '>' in sender_email:
+            sender_email = sender_email.split('<')[1].split('>')[0].strip()
+        sender_email = sender_email.lower()
+    else:
+        logger.info("Invalid sender email format")
         return
     
     # Determine if this should be reported as spam based on risk score
@@ -84,24 +98,23 @@ def auto_report_domains_to_blockchain(domains, final_risk, llm_reason="", sender
     if sender:
         reason += f" - From: {sender}"
     
-    # Report each domain
-    for domain in domains:
-        try:
-            logger.info(f"Auto-reporting domain '{domain}' as {classification_type} to blockchain")
-            success, message = store_classification_to_blockchain(
-                domain=domain,
-                is_spam=is_spam,
-                reason=reason,
-                final_risk_score=final_risk
-            )
+    # Report sender email
+    try:
+        logger.info(f"Auto-reporting sender email '{sender_email}' as {classification_type} to blockchain")
+        success, message = store_classification_to_blockchain(
+            domain=sender_email,  # Using domain parameter for sender email
+            is_spam=is_spam,
+            reason=reason,
+            final_risk_score=final_risk
+        )
+        
+        if success:
+            logger.info(f"✅ Successfully reported {sender_email} to blockchain")
+        else:
+            logger.warning(f"❌ Failed to report {sender_email} to blockchain: {message}")
             
-            if success:
-                logger.info(f"✅ Successfully reported {domain} to blockchain")
-            else:
-                logger.warning(f"❌ Failed to report {domain} to blockchain: {message}")
-                
-        except Exception as e:
-            logger.error(f"Error reporting domain {domain} to blockchain: {e}")
+    except Exception as e:
+        logger.error(f"Error reporting sender email {sender_email} to blockchain: {e}")
 
 @app.route('/')
 def home():
@@ -131,26 +144,24 @@ def analyze():
     subject = data.get("subject", "")
     body = data.get("body", "")
     urls = data.get("urls", [])
+    force_llm = data.get("force_llm", False)  # New parameter to force LLM analysis
     
-    logger.info(f"Analyzing email from {sender} with subject: {subject[:50]}...")
+    logger.info(f"Analyzing email from {sender} with subject: {subject[:50]}... (force_llm={force_llm})")
     
     # Call your compute_final_risk which returns (final_risk, details)
-    final_risk, details = compute_final_risk(body, sender=sender, subject=subject)
+    final_risk, details = compute_final_risk(body, sender=sender, subject=subject, force_llm=force_llm)
     
     # Ensure actions exist
     actions = details.get("llm_actions") or details.get("actions") or ["No actions required"]
     llm_reason = details.get("llm_reason", "")
     
-    # Extract domains from email content for auto-reporting
-    email_content = f"{subject} {body} {' '.join(urls)}"
-    domains = extract_domains_from_content(email_content)
-    
-    # Auto-report domains to blockchain if enabled and confidence is high
-    if domains:
-        logger.info(f"Found {len(domains)} domains: {domains}")
+    # Auto-report sender email to blockchain if enabled and confidence is high
+    # Only auto-report if NOT force_llm (i.e., this is initial analysis)
+    if sender and not force_llm:
+        logger.info(f"Sender email: {sender}")
         try:
             auto_report_domains_to_blockchain(
-                domains=domains,
+                domains=[],  # Not used anymore, kept for compatibility
                 final_risk=final_risk,
                 llm_reason=llm_reason,
                 sender=sender
@@ -165,15 +176,15 @@ def analyze():
         "llm_actions": actions,
         "llm_reason": llm_reason,
         "blockchain_signals": details.get("blockchain_signals", {}),
-        "domain_classifications": details.get("domain_classifications", {}),
-        "blockchain_weight": details.get("blockchain_weight", 0.0),  # Add blockchain_weight to response
+        "sender_classification": details.get("blockchain_signals", {}).get("sender_classification", {}),
+        "blockchain_weight": details.get("blockchain_weight", 0.0),
         "blockchain_available": details.get("blockchain_signals", {}).get("blockchain_available", False),
-        "domain_reputations": details.get("domain_reputations", {}),  # Add domain reputations for UI
-        "auto_reported_domains": domains if AUTO_REPORT_TO_BLOCKCHAIN else [],
-        "domains_found": len(domains)
+        "sender_reputation": details.get("sender_reputation", {}),
+        "from_previous_incident": details.get("blockchain_signals", {}).get("from_previous_incident", False),
+        "force_llm_used": force_llm
     }
     
-    logger.info(f"Analysis complete: risk={final_risk:.3f}, domains={len(domains)}")
+    logger.info(f"Analysis complete: risk={final_risk:.3f}, from_previous_incident={resp['from_previous_incident']}")
     return jsonify(resp)
 
 @app.route("/blockchain/status", methods=["GET"])
@@ -234,7 +245,7 @@ def store_domain():
 
 @app.route("/blockchain/bulk-store", methods=["POST"])
 def bulk_store_domains():
-    """Store multiple domains from analysis result (admin endpoint)"""
+    """Store sender email from analysis result (admin endpoint)"""
     if API_KEY:
         key = request.headers.get("x-api-key", "")
         if key != API_KEY:
@@ -246,37 +257,40 @@ def bulk_store_domains():
     reason = data.get("reason", "Bulk admin classification from email analysis")
     
     final_risk = analysis_result.get("final_risk", 0.5)
-    domains = get_domains_from_analysis_result(analysis_result)
     
-    if not domains:
-        return jsonify({"error": "No domains found in analysis result"}), 400
+    # Extract sender email
+    sender = analysis_result.get("sender", "")
+    if not sender:
+        return jsonify({"error": "No sender email found in analysis result"}), 400
     
-    logger.info(f"Bulk storing {len(domains)} domains as {user_classification}")
+    # Clean sender email
+    sender_email = sender
+    if '@' in sender:
+        if '<' in sender and '>' in sender:
+            sender_email = sender.split('<')[1].split('>')[0].strip()
+        sender_email = sender_email.lower()
     
-    results = []
+    logger.info(f"Bulk storing sender email {sender_email} as {user_classification}")
+    
     is_spam = user_classification == "spam"
     
-    for domain in domains:
-        success, message = store_classification_to_blockchain(domain, is_spam, reason, final_risk)
-        results.append({
-            "domain": domain,
-            "success": success,
-            "message": message
-        })
+    success, message = store_classification_to_blockchain(sender_email, is_spam, reason, final_risk)
     
     return jsonify({
-        "results": results,
+        "results": [{
+            "sender_email": sender_email,
+            "success": success,
+            "message": message
+        }],
         "classification": user_classification,
-        "total_domains": len(domains),
-        "successful_stores": sum(1 for r in results if r["success"]),
+        "successful_stores": 1 if success else 0,
         "source": "bulk_admin"
     })
 
 @app.route("/blockchain/bulk-report", methods=["POST"])
 def bulk_report_domains():
     """
-    User feedback endpoint: Report domains to blockchain based on user classification
-    Extracts sender domain and URL domains from email analysis
+    User feedback endpoint: Report sender email to blockchain based on user classification
     """
     if API_KEY:
         key = request.headers.get("x-api-key", "")
@@ -293,10 +307,7 @@ def bulk_report_domains():
     logger.info(f"   Classification: {user_classification}")
     logger.info(f"   Analysis result keys: {list(analysis_result.keys()) if isinstance(analysis_result, dict) else 'Not a dict'}")
     
-    # Extract domains from analysis result
-    domains = []
-    
-    # 1. Extract sender domain from email (check multiple possible locations)
+    # Extract sender email from analysis result
     sender = (
         analysis_result.get("sender") or 
         (analysis_result.get("details", {}).get("sender") if isinstance(analysis_result, dict) else None)
@@ -304,114 +315,50 @@ def bulk_report_domains():
     
     logger.info(f"   Sender found: {sender}")
     
-    if sender and "@" in sender:
-        # Extract domain from email address (handle <email> format too)
-        email_match = sender
-        if "<" in sender and ">" in sender:
-            # Handle format like: "Name <email@domain.com>"
-            email_match = sender.split("<")[1].split(">")[0]
-        
-        sender_domain = email_match.split("@")[-1].strip().lower()
-        # Clean up any trailing characters
-        sender_domain = sender_domain.rstrip('>').strip()
-        
-        if sender_domain:
-            domains.append(sender_domain)
-            logger.info(f"📧 Extracted sender domain: {sender_domain}")
-    
-    # 2. Extract domains from the analysis details
-    details = analysis_result.get("details", {}) if isinstance(analysis_result, dict) else {}
-    
-    # Try to get domains from various locations in details
-    if isinstance(details, dict):
-        # Direct domains field
-        if "domains" in details and details["domains"]:
-            url_domains = details.get("domains", [])
-            domains.extend(url_domains)
-            logger.info(f"🔗 Found {len(url_domains)} domains in details.domains: {url_domains}")
-        
-        # URLs field - extract domains from URLs
-        if "urls" in details and details["urls"]:
-            urls = details.get("urls", [])
-            logger.info(f"🌐 Found {len(urls)} URLs, extracting domains...")
-            for url in urls:
-                try:
-                    if not url.startswith(('http://', 'https://')):
-                        url = 'http://' + url
-                    parsed = urlparse(url)
-                    if parsed.netloc:
-                        domain = parsed.netloc.lower()
-                        if domain.startswith('www.'):
-                            domain = domain[4:]
-                        if ':' in domain:  # Remove port
-                            domain = domain.split(':')[0]
-                        if domain:
-                            domains.append(domain)
-                            logger.info(f"   Extracted from URL: {domain}")
-                except Exception as e:
-                    logger.warning(f"   Could not parse URL {url}: {e}")
-        
-        # Blockchain signals
-        blockchain_signals = details.get("blockchain_signals", {})
-        if isinstance(blockchain_signals, dict):
-            domain_classifications = blockchain_signals.get("domain_classifications", {})
-            if domain_classifications:
-                domains.extend(domain_classifications.keys())
-                logger.info(f"⛓️ Found {len(domain_classifications)} domains in blockchain signals")
-    
-    # Remove duplicates and empty strings
-    domains = list(set(filter(None, domains)))
-    
-    if not domains:
-        logger.warning("⚠️ No domains found in user feedback request")
+    if not sender or "@" not in sender:
+        logger.warning("⚠️ No valid sender email found in user feedback request")
         logger.warning(f"   Full data structure: {data}")
         return jsonify({
-            "error": "No domains found to report",
-            "hint": "Make sure the email analysis includes sender or URLs",
-            "total_domains": 0,
+            "error": "No sender email found to report",
+            "hint": "Make sure the email analysis includes sender email address",
             "successful_reports": 0
         }), 400
     
-    logger.info(f"📊 User feedback: Reporting {len(domains)} domain(s) as {user_classification}")
-    logger.info(f"📝 Domains to report: {domains}")
+    # Clean sender email
+    sender_email = sender
+    if '<' in sender and '>' in sender:
+        # Handle format like: "Name <email@domain.com>"
+        sender_email = sender.split("<")[1].split(">")[0]
     
-    # Report each domain to blockchain
-    results = []
+    sender_email = sender_email.strip().lower()
+    
+    logger.info(f"📊 User feedback: Reporting sender email '{sender_email}' as {user_classification}")
+    
+    # Report sender email to blockchain
     is_spam = user_classification == "spam"
     final_risk = analysis_result.get("final_risk", 0.9 if is_spam else 0.1)
     
-    import time
+    success, message = store_classification_to_blockchain(
+        domain=sender_email,
+        is_spam=is_spam,
+        reason=reason,
+        final_risk_score=final_risk
+    )
     
-    for idx, domain in enumerate(domains):
-        # Add small delay between submissions to avoid cooldown issues
-        if idx > 0:
-            time.sleep(0.5)  # 500ms delay between submissions
-            
-        success, message = store_classification_to_blockchain(
-            domain=domain,
-            is_spam=is_spam,
-            reason=reason,
-            final_risk_score=final_risk
-        )
-        results.append({
-            "domain": domain,
-            "success": success,
-            "message": message
-        })
-        
-        if success:
-            logger.info(f"✅ Reported {domain} as {user_classification}")
-        else:
-            logger.warning(f"❌ Failed to report {domain}: {message}")
-    
-    successful_reports = sum(1 for r in results if r["success"])
+    if success:
+        logger.info(f"✅ Reported {sender_email} as {user_classification}")
+    else:
+        logger.warning(f"❌ Failed to report {sender_email}: {message}")
     
     return jsonify({
-        "results": results,
+        "results": [{
+            "sender_email": sender_email,
+            "success": success,
+            "message": message
+        }],
         "classification": user_classification,
-        "total_domains": len(domains),
-        "successful_reports": successful_reports,
-        "domains_reported": [r["domain"] for r in results if r["success"]],
+        "successful_reports": 1 if success else 0,
+        "sender_reported": sender_email if success else None,
         "source": "user_feedback"
     })
 
