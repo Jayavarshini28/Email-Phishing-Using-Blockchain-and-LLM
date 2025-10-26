@@ -269,7 +269,7 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
     try:
         script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
         if not os.path.exists(script_path):
-            logger.warning("Blockchain script not found")
+            logger.warning(f"Blockchain script not found at: {script_path}")
             return {"exists": False}
         
         # Use UTF-8 encoding to avoid Windows CP1252 Unicode errors
@@ -279,7 +279,8 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
             text=True,
             encoding='utf-8',
             errors='ignore',  # Ignore Unicode decode errors
-            timeout=10
+            timeout=15,  # Increased from 10 to 15 seconds
+            cwd=os.path.dirname(script_path)  # Set working directory to blockchain folder
         )
         
         if result.returncode == 0 and result.stdout:
@@ -307,6 +308,9 @@ def get_blockchain_domain_reputation(domain: str) -> Dict:
             if result.stderr:
                 logger.warning(f"Blockchain query stderr: {result.stderr[:100]}")
             return {"exists": False}
+    except subprocess.TimeoutExpired:
+        logger.warning(f"⏱️ Blockchain query timeout for {domain}")
+        return {"exists": False}
     except Exception as e:
         logger.error(f"Error querying blockchain: {e}")
         return {"exists": False}
@@ -316,27 +320,38 @@ def store_classification_to_blockchain(domain: str, is_spam: bool, reason: str, 
     try:
         script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
         if not os.path.exists(script_path):
-            logger.warning("Blockchain script not found")
+            logger.warning(f"Blockchain script not found at: {script_path}")
             return False, "Blockchain script not available"
         
-        classification ='true' if is_spam else 'false'
+        classification = 'true' if is_spam else 'false'
+        
+        # Truncate reason to avoid command line length issues
+        truncated_reason = reason[:200] if len(reason) > 200 else reason
+        
+        logger.info(f"Attempting blockchain storage for {domain} (spam={is_spam})")
         
         # Use UTF-8 encoding to avoid Windows CP1252 Unicode errors
+        # Increased timeout to 60 seconds for blockchain transactions
         result = subprocess.run(
-            ['node', script_path, 'classify', domain, classification, reason],
+            ['node', script_path, 'classify', domain, classification, truncated_reason],
             capture_output=True,
             text=True,
             encoding='utf-8',
             errors='ignore',  # Ignore Unicode decode errors
-            timeout=30
+            timeout=60,  # Increased from 30 to 60 seconds
+            cwd=os.path.dirname(script_path)  # Set working directory to blockchain folder
         )
         
         if result.returncode == 0:
-            logger.info(f"Successfully stored {domain} as {classification}")
+            logger.info(f"✅ Successfully stored {domain} as {classification}")
             return True, f"Domain {domain} stored as {classification}"
         else:
-            logger.error(f"Failed to store {domain}: {result.stderr[:200]}")
-            return False, f"Storage failed: {result.stderr[:200]}"
+            error_msg = result.stderr[:200] if result.stderr else "Unknown error"
+            logger.error(f"❌ Failed to store {domain}: {error_msg}")
+            return False, f"Storage failed: {error_msg}"
+    except subprocess.TimeoutExpired:
+        logger.warning(f"⏱️ Blockchain storage timeout for {domain} - transaction may still complete")
+        return False, f"Blockchain transaction timeout (may still complete in background)"
     except Exception as e:
         logger.error(f"Error storing to blockchain: {e}")
         return False, f"Error: {e}"

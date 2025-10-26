@@ -14,4 +14,4 @@ scikit-learn
 web3
 py-solc-x
 eth-account
-python-dotenv
+gunicorn==21.2.0

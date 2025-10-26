@@ -26,9 +26,16 @@ class BlockchainInstance:
         """Get classification for a specific domain"""
         try:
             script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
+            if not os.path.exists(script_path):
+                logger.warning(f"Blockchain script not found at: {script_path}")
+                return {"domain": domain, "classification": "unknown", "confidence": 0.0}
+                
             result = subprocess.run(
                 ['node', script_path, 'query', domain],
-                capture_output=True, text=True, timeout=10
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd=os.path.dirname(script_path)  # Set working directory
             )
             
             if result.returncode == 0:
@@ -36,6 +43,9 @@ class BlockchainInstance:
                 return {"domain": domain, "classification": "ham", "confidence": 0.5}
             else:
                 return {"domain": domain, "classification": "unknown", "confidence": 0.0}
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Blockchain query timeout for {domain}")
+            return {"domain": domain, "classification": "unknown", "confidence": 0.0}
         except Exception as e:
             logger.error(f"Error getting domain classification: {e}")
             return {"domain": domain, "classification": "unknown", "confidence": 0.0}
@@ -44,9 +54,16 @@ class BlockchainInstance:
         """Get detailed reputation for a domain"""
         try:
             script_path = os.path.join(os.path.dirname(__file__), 'blockchain', 'interact.js')
+            if not os.path.exists(script_path):
+                logger.warning(f"Blockchain script not found at: {script_path}")
+                return {"exists": False}
+                
             result = subprocess.run(
                 ['node', script_path, 'reputation', domain],
-                capture_output=True, text=True, timeout=10
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd=os.path.dirname(script_path)  # Set working directory
             )
             
             if result.returncode == 0:
@@ -60,6 +77,9 @@ class BlockchainInstance:
                 }
             else:
                 return {"exists": False}
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Blockchain reputation query timeout for {domain}")
+            return {"exists": False}
         except Exception as e:
             logger.error(f"Error getting domain reputation: {e}")
             return {"exists": False}

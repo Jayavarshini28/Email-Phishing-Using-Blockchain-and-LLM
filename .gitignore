@@ -1,11 +1,47 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.log
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Credentials and secrets
 credentials.json
 token.json
-app.py
-email_phish/
 .env
-.venv/
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+bash.exe.stackdump
+
+# Project specific
+email_phish/
+
+# Node modules (blockchain)
+node_modules/
+backend/blockchain/node_modules/
+backend/blockchain/cache/
+backend/blockchain/artifacts/build-info/
+
+# Google Cloud
+.gcloud/
