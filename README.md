@@ -9,7 +9,7 @@ Advanced email phishing detection using Machine Learning, Large Language Models 
 - ✅ **Blockchain Integration**: Decentralized domain reputation on Ethereum
 - ✅ **Smart Caching**: Blockchain-first strategy (70% faster)
 - ✅ **Auto-reporting**: Confidence-based classification storage
-- ✅ **User Feedback**: Community-driven learning system
+- ✅ **User Feedback**: Community-driven learning system.
 
 ## 📁 Project Structure
 
